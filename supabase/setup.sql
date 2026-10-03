@@ -35,6 +35,10 @@ $$;
 
 -- True for the SQL editor, cron jobs, edge functions and our own trusted
 -- functions. False for signed-in browsers (roles authenticated / anon).
+-- Our trusted functions mark themselves with set_config('nb.system', '1', true)
+-- and put the old value back before they return. (A "set nb.system = '1'" clause
+-- on the function would be tidier, but on Supabase only a superuser may attach a
+-- custom setting to a function: "permission denied to set parameter".)
 create or replace function private.is_system() returns boolean
 language sql stable as $$
   select coalesce(current_setting('nb.system', true), '') = '1'
@@ -1292,14 +1296,16 @@ end $$;
 
 -- The one function cron calls, every minute.
 create or replace function private.run_notifications() returns void
-language plpgsql security definer set search_path = '' set nb.system = '1' as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   s public.notify_settings;
   now_ts timestamptz := private.now_utc();
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
 begin
   if not pg_try_advisory_xact_lock(hashtext('nudge.notifications')) then
     return;
   end if;
+  perform set_config('nb.system', '1', true);
   select * into s from public.notify_settings where id = 1;
   perform private.reconcile_emails(now_ts);
   if s.emails_enabled then
@@ -1311,6 +1317,7 @@ begin
      where status = 'pending' and delivery = 'instant' and send_after <= now_ts;
   end if;
   perform private.housekeeping(now_ts);
+  perform set_config('nb.system', prev_sys, true);
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -1318,7 +1325,7 @@ end $$;
 -- ---------------------------------------------------------------------
 
 create or replace function private.roll_cycle(p_force boolean default false) returns boolean
-language plpgsql security definer set search_path = '' set nb.system = '1' as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   b public.board;
   today date;
@@ -1327,6 +1334,7 @@ declare
   newstart date;
   n_done int;
   n_open int;
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
 begin
   perform pg_advisory_xact_lock(hashtext('nudge.roll'));
   select * into b from public.board where id = 1 for update;
@@ -1345,9 +1353,11 @@ begin
   on conflict (n) do nothing;
   delete from public.cycle_history where n <= b.cycle_n - 12;
 
+  perform set_config('nb.system', '1', true);
   update public.cards set archived_at = now() where status = 'done' and archived_at is null;
   update public.cards set rolled = rolled + 1 where status in ('todo', 'doing', 'review') and archived_at is null;
   update public.board set cycle_n = b.cycle_n + k, cycle_start = newstart, updated_at = now() where id = 1;
+  perform set_config('nb.system', prev_sys, true);
   return true;
 end $$;
 
@@ -1407,15 +1417,17 @@ end $$;
 -- Used by the "pause / digest / off" links at the bottom of every email.
 -- No sign-in needed: the long random token in the link is the key.
 create or replace function public.mute_by_token(p_token uuid, p_mode text) returns jsonb
-language plpgsql security definer set search_path = '' set nb.system = '1' as $$
+language plpgsql security definer set search_path = '' as $$
 declare
   per public.people;
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
 begin
   if p_mode not in ('pause', 'calm', 'off') then
     return jsonb_build_object('ok', false);
   end if;
   select * into per from public.people where mute_token = p_token and active;
   if not found then return jsonb_build_object('ok', false); end if;
+  perform set_config('nb.system', '1', true);
   if p_mode = 'pause' then
     update public.people set muted_until = private.next_monday_start(private.now_utc(), timezone) where id = per.id;
   elsif p_mode = 'calm' then
@@ -1423,6 +1435,7 @@ begin
   else
     update public.people set notify_mode = 'off' where id = per.id;
   end if;
+  perform set_config('nb.system', prev_sys, true);
   return jsonb_build_object('ok', true, 'name', split_part(per.name, ' ', 1), 'mode', p_mode);
 end $$;
 
@@ -1490,14 +1503,18 @@ create or replace function private.bootstrap(
   p_name text, p_email text, p_board_name text default 'My board',
   p_prefix text default 'TSK', p_tz text default 'UTC'
 ) returns text
-language plpgsql security definer set search_path = '' set nb.system = '1' as $$
+language plpgsql security definer set search_path = '' as $$
+declare
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
 begin
   if exists (select 1 from public.people) then
     raise exception 'This board already has people, so it was left alone. If you mistyped your email, run: update public.people set email = ''right@address.com'' where role = ''pm'';';
   end if;
+  perform set_config('nb.system', '1', true);
   insert into public.people (name, email, role, timezone) values (p_name, p_email, 'pm', p_tz);
   update public.board set name = p_board_name, card_prefix = upper(p_prefix), timezone = p_tz,
     cycle_start = (private.now_utc() at time zone p_tz)::date, updated_at = now() where id = 1;
+  perform set_config('nb.system', prev_sys, true);
   return 'Done. ' || p_email || ' is now the project manager. Sign in with that email.';
 end $$;
 
