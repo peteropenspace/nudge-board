@@ -553,7 +553,7 @@ function parseQuick(raw){
   });
   s=s.replace(/\s>(backlog|todo|doing|review|done)(?=\s)/gi,(m,v)=>{r.status=v.toLowerCase();return ' ';});
   s=s.replace(/\s@([\w.-]+)(?=\s)/g,(m,v)=>{r.assignee=cleanName(v);return ' ';});
-  s=s.replace(/\s#([a-z][\w-]*)(?=\s)/gi,(m,v)=>{r.tags.push(v.toLowerCase());return ' ';});
+  s=s.replace(/\s#([a-z][\w-]*)(?=\s)/gi,(m,v)=>{v=v.toLowerCase().slice(0,30);if(r.tags.length<20&&r.tags.indexOf(v)<0)r.tags.push(v);return ' ';});
   const t=today(),dow=new Date().getDay();
   const P='(?:\\s+(?:by|due|on|until|before))?\\s+';
   const tryDate=(src,fn)=>{
