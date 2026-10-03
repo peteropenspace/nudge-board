@@ -1,0 +1,11 @@
+-- Run this ONCE, after setup.sql. Change the five values, then press Run.
+-- It creates the first project manager and names your board.
+-- You will sign in to the app with the email you put here.
+
+select private.bootstrap(
+  'Your Name',             -- your name, as your team should see it
+  'you@yourcompany.com',   -- your work email
+  'My board',              -- the board's name
+  'TSK',                   -- 2 to 5 capital letters or numbers, used in card numbers like TSK-12
+  'Africa/Lagos'           -- your time zone, for example Europe/London or America/New_York
+);

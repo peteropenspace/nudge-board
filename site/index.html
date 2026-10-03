@@ -1,0 +1,1947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nudge Board</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: masthead (board name, cycle pulse, tools) > one quick-add line > five status columns that sort themselves by focus score; the Focus tab lists what to do next and what is due. */
+:root{
+  --bg:#E7EDEB; --col:#F1F5F3; --surface:#FFFFFF; --chip:#E6ECEA;
+  --ink:#12201D; --ink2:#42544F; --ink3:#66776F; --line:#D2DBD8; --line2:#E4EAE8;
+  --accent:#0F766E; --accent-ink:#FFFFFF; --accent-soft:#D5EEE9;
+  --warn:#94500A; --warn-soft:#FAEBCF; --bad:#B0302A; --bad-soft:#FADCD8;
+  --shadow:0 1px 2px rgba(18,32,29,.07);
+  --f-body:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --f-display:'Bricolage Grotesque','Figtree',system-ui,sans-serif;
+  --f-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C1311; --col:#121B18; --surface:#18231F; --chip:#233029;
+    --ink:#E5EEEB; --ink2:#AEBFBA; --ink3:#83958F; --line:#2A3A35; --line2:#22302B;
+    --accent:#3FCDB6; --accent-ink:#06211C; --accent-soft:#12403A;
+    --warn:#EBAA4B; --warn-soft:#3B2C12; --bad:#F2796B; --bad-soft:#42201C;
+    --shadow:0 1px 2px rgba(0,0,0,.4); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C1311; --col:#121B18; --surface:#18231F; --chip:#233029;
+  --ink:#E5EEEB; --ink2:#AEBFBA; --ink3:#83958F; --line:#2A3A35; --line2:#22302B;
+  --accent:#3FCDB6; --accent-ink:#06211C; --accent-soft:#12403A;
+  --warn:#EBAA4B; --warn-soft:#3B2C12; --bad:#F2796B; --bad-soft:#42201C;
+  --shadow:0 1px 2px rgba(0,0,0,.4); color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--f-body);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--f-mono)}
+.muted{color:var(--ink3)}
+.grow{flex:1 1 auto}
+.wrap{max-width:1560px;margin:0 auto;padding-inline:16px;padding-block:14px 64px}
+.ic{width:16px;height:16px;flex:none}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 11px;border:1px solid var(--line);background:var(--surface);border-radius:8px;font-weight:600;font-size:13px;white-space:nowrap}
+.btn:hover{border-color:var(--ink3)}
+.btn.small{height:26px;padding:0 9px;font-size:12px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--bad)}
+.iconbtn{display:inline-grid;place-items:center;width:28px;height:28px;border:0;background:none;border-radius:6px;color:var(--ink3);flex:none}
+.iconbtn:hover{background:var(--chip);color:var(--ink)}
+.iconbtn.sm{width:24px;height:24px}
+.badge{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--bad);color:var(--surface);font:600 11px/1 var(--f-mono)}
+
+/* masthead */
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:14px 32px;padding-bottom:14px}
+.brand{display:flex;flex-direction:column;gap:5px;min-width:0}
+.brand .kicker{font:600 11px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink3)}
+.brand h1{margin:0;font:700 26px/1.05 var(--f-display);letter-spacing:-.02em;overflow-wrap:anywhere}
+.pulse{display:flex;flex-direction:column;gap:7px;flex:1 1 280px;max-width:440px;min-width:0}
+.pl-top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.cy{font:700 13px/1 var(--f-display)}
+.bar{position:relative;height:8px;border-radius:99px;background:var(--line)}
+.bar i{position:absolute;top:0;bottom:0;left:0;border-radius:99px}
+.bar .b-done{background:var(--accent)}
+.bar .b-fly{background:color-mix(in srgb,var(--accent) 38%,transparent);border-radius:0 99px 99px 0}
+.bar .tick{top:-4px;bottom:-4px;width:2px;border-radius:1px;background:var(--ink)}
+.pl-bot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12.5px}
+.pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:99px;background:var(--chip);color:var(--ink2);font-weight:650;font-size:11.5px}
+.pill.good{background:var(--accent-soft);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.tools{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
+
+/* quick add */
+.add{display:flex;gap:8px}
+.add input{flex:1;min-width:0;height:46px;padding:0 15px;font-size:15.5px;border:1px solid var(--line);background:var(--surface);border-radius:10px;box-shadow:var(--shadow)}
+.add input:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.add .btn{height:46px;padding-inline:16px}
+.preview{min-height:30px;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:9px 2px 2px;color:var(--ink3);font-size:12.5px}
+.preview kbd,.help kbd{font:500 11px/1 var(--f-mono);padding:2px 5px;border-radius:4px;background:var(--chip);color:var(--ink2)}
+
+.notice{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:9px 12px;border-radius:9px;border:1px solid var(--line);background:var(--surface);margin-top:8px;font-size:13px}
+.notice.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.notice .btn{margin-left:auto}
+.notice.warn .btn{background:transparent;border-color:currentColor;color:inherit}
+
+/* view bar */
+.viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:16px 0 10px}
+.tabs{display:inline-flex;background:var(--chip);border-radius:9px;padding:3px}
+.tab{border:0;background:none;height:28px;padding:0 13px;border-radius:7px;font-weight:600;color:var(--ink2)}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.search{position:relative;display:flex;align-items:center}
+.search .ic{position:absolute;left:9px;color:var(--ink3);pointer-events:none}
+.search input{height:30px;width:190px;max-width:100%;padding:0 10px 0 30px;border:1px solid var(--line);background:var(--surface);border-radius:8px;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.who{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid transparent;background:none;display:inline-grid;place-items:center}
+.who.on{border-color:var(--accent)}
+.av{width:22px;height:22px;border-radius:50%;display:inline-grid;place-items:center;font:600 10px/1 var(--f-body);color:#fff;flex:none}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border:0;border-radius:5px;background:var(--chip);color:var(--ink2);font:500 11px/1 var(--f-mono);white-space:nowrap}
+.chip .ic{width:11px;height:11px}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.good{background:var(--accent-soft);color:var(--accent)}
+button.chip:hover{filter:brightness(.96)}
+button.chip.on{background:var(--accent);color:var(--accent-ink)}
+
+/* board */
+.board{display:grid;grid-template-columns:repeat(5,minmax(232px,1fr));gap:12px;overflow-x:auto;padding:3px 3px 12px;margin-inline:-3px;align-items:start;scroll-snap-type:x proximity}
+.col{scroll-snap-align:start;display:flex;flex-direction:column;gap:8px;min-width:0;padding:8px;border-radius:12px;background:var(--col)}
+.col.backlog{background:transparent;border:1px dashed var(--line)}
+.col.drop{outline:2px dashed var(--accent);outline-offset:-2px}
+.chead{display:flex;align-items:center;gap:8px;padding:3px 4px 0}
+.chead h2{margin:0;font:650 12px/1 var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink2)}
+.count{font:500 11.5px/1 var(--f-mono);color:var(--ink3)}
+.count.over{color:var(--warn);font-weight:600}
+.sub{margin:0;padding:0 4px;font-size:12px;color:var(--ink3)}
+.sub.warn{color:var(--warn)}
+.cards{display:flex;flex-direction:column;gap:8px;min-height:24px}
+.empty{padding:14px 8px;text-align:center;font-size:12.5px;color:var(--ink3)}
+.card{display:flex;flex-direction:column;gap:7px;min-width:0;padding:10px 10px 9px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);cursor:pointer}
+.card:hover{border-color:var(--ink3)}
+.card.dragging{opacity:.4}
+.card.is-blocked .ctitle{color:var(--ink3)}
+.ctop{display:flex;align-items:center;gap:7px;min-width:0}
+.key{font:500 11px/1 var(--f-mono);color:var(--ink3);white-space:nowrap}
+.ctitle{font-weight:560;font-size:13.5px;line-height:1.35;overflow-wrap:anywhere}
+.cmeta{display:flex;flex-wrap:wrap;gap:5px}
+.prio{display:inline-flex;align-items:center;gap:2px;color:var(--ink3)}
+.prio b{font:700 11px/1 var(--f-mono)}
+.prio.p4{color:var(--bad)}
+.prio.p3{color:var(--warn)}
+.pi{width:13px;height:13px}
+.ringbtn{padding:4px;margin:-4px;border:0;background:none;border-radius:50%;display:inline-grid;flex:none}
+.ring{--p:0%;--rc:var(--ink3);width:18px;height:18px;padding:2px;border:2px solid var(--rc);border-radius:50%;background:conic-gradient(var(--rc) var(--p),transparent 0) content-box;display:grid;place-items:center}
+.ringbtn:hover .ring{--rc:var(--accent)}
+.ring[data-s="backlog"]{border-style:dashed}
+.ring[data-s="doing"]{--p:50%;--rc:var(--accent)}
+.ring[data-s="review"]{--p:75%;--rc:var(--accent)}
+.ring[data-s="done"]{background:var(--accent);border-color:var(--accent);padding:0}
+.ring svg{width:10px;height:10px;stroke:var(--accent-ink);stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+/* focus view */
+.focus{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.panel h2{margin:0;padding:13px 16px 4px;font:700 15px/1.2 var(--f-display)}
+.panel .lede{margin:0;padding:0 16px 10px;font-size:12.5px;color:var(--ink3)}
+.panel h3{margin:0;padding:10px 16px 6px;font:650 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);border-top:1px solid var(--line2)}
+.list{list-style:none;margin:0;padding:0}
+.frow,.drow{display:grid;gap:12px;align-items:center;padding:10px 16px;border-top:1px solid var(--line2);cursor:pointer}
+.frow{grid-template-columns:22px minmax(0,1fr) auto}
+.drow{grid-template-columns:52px minmax(0,1fr) auto}
+.frow:hover,.drow:hover{background:var(--col)}
+.rank{font:600 13px/1 var(--f-mono);color:var(--ink3)}
+.ftitle{font-weight:560;overflow-wrap:anywhere}
+.why{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.dd{font:600 12px/1.2 var(--f-mono);color:var(--ink2)}
+.fempty{padding:14px 16px;color:var(--ink3);font-size:13px;border-top:1px solid var(--line2)}
+
+/* dialogs */
+dialog{width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.28);overflow:auto}
+dialog::backdrop{background:rgba(8,16,14,.55)}
+.dh{display:flex;align-items:center;gap:10px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line2)}
+.dh h2{margin:0;font:700 17px/1.2 var(--f-display)}
+.dh .muted{font-size:12.5px;min-width:0}
+.dh .iconbtn{margin-left:auto}
+.db{display:flex;flex-direction:column;gap:14px;padding:16px 18px}
+.df{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--line2)}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field>label,.lbl{font:600 11px/1 var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
+input,select,textarea{min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+textarea{resize:vertical;line-height:1.4}
+.title-input{font:650 18px/1.3 var(--f-body);padding:9px 10px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
+.hint{font-size:12px;color:var(--ink3)}
+.hint.warn{color:var(--warn)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.check{display:flex;align-items:center;gap:8px;padding:3px 0}
+.check label{flex:1;min-width:0;overflow-wrap:anywhere}
+.check label.done{color:var(--ink3);text-decoration:line-through}
+.toggle{display:flex;align-items:center;gap:8px;font-weight:500}
+input[type="checkbox"]{width:16px;height:16px;padding:0;accent-color:var(--accent)}
+.ci{display:flex;flex-direction:column;gap:10px;padding:12px 0;border-top:1px solid var(--line2)}
+.ci:first-child{border-top:0;padding-top:0}
+.ci-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
+.ci-title{font-weight:600;overflow-wrap:anywhere}
+.gitrow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--line2)}
+.gitrow .grow{min-width:0}
+.gitrow code,.code{font:12px/1.5 var(--f-mono);color:var(--ink2);overflow-wrap:anywhere}
+.mono-area{font:12.5px/1.5 var(--f-mono)}
+.help h3{margin:4px 0 8px;font:650 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.help ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center}
+
+/* toast */
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px);padding:9px 10px 9px 14px;border-radius:10px;background:var(--ink);color:var(--bg);font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:50}
+.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast .btn{background:transparent;color:inherit;border-color:currentColor}
+
+/* team mode */
+.gate{position:fixed;inset:0;z-index:60;background:var(--bg);display:grid;place-items:center;padding:24px 16px;overflow:auto}
+.gate-card{width:min(420px,100%);display:flex;flex-direction:column;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:26px 24px}
+.gate-card h1{margin:0;font:700 26px/1.1 var(--f-display);letter-spacing:-.02em}
+.gate-card p{margin:0}
+.gate .kicker{font:600 11px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink3)}
+.gate .big{height:42px;justify-content:center;font-size:14px}
+.gate .or{text-align:center;color:var(--ink3);font-size:12px}
+.whochip{display:inline-grid;place-items:center;width:32px;height:32px;border:0;background:none;padding:0}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto auto;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line2)}
+.prow:first-of-type{border-top:0}
+.grid2.wide{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.prow .sub2{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:12.5px;color:var(--ink2)}
+.prow.off{opacity:.6}
+.sec{display:flex;flex-direction:column;gap:10px}
+.sec+.sec{padding-top:14px;border-top:1px solid var(--line2)}
+.sec h3{margin:0;font:700 14px/1.2 var(--f-display)}
+.addrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto auto;gap:8px;align-items:center}
+.chk{display:inline-flex;align-items:center;gap:6px}
+.note{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line2);cursor:pointer}
+.note:first-child{border-top:0}
+button.note{width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line2);font:inherit;color:inherit;padding:10px 0}
+button.note:first-child{border-top:0}
+.note .msg{display:block}
+.note .dot{flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:transparent}
+.note.unread .dot{background:var(--accent)}
+.note.unread .msg{font-weight:600}
+.note .when{font:500 11px/1.4 var(--f-mono);color:var(--ink3);white-space:nowrap}
+.note .msg{min-width:0;overflow-wrap:anywhere}
+.okline{color:var(--accent);font-weight:600}
+.badline{color:var(--bad);font-weight:600}
+@media (max-width:860px){.focus{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){.prow,.addrow{grid-template-columns:minmax(0,1fr) auto}.prow input[type=email],.addrow input[type=email]{grid-column:1 / -1}}
+@media (max-width:640px){
+  .board{grid-template-columns:repeat(5,84vw)}
+  .tools .lbl-t{display:none}
+  .tools .btn{padding:0 9px}
+  .brand h1{font-size:23px}
+  .preview.idle{display:none}
+}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="kicker">Nudge Board</span>
+      <h1 id="boardName">Board</h1>
+    </div>
+    <div class="pulse" id="pulse"></div>
+    <div class="tools">
+      <button class="iconbtn" id="btnBell" data-act="open-notes" title="Notifications" aria-label="Notifications" hidden></button>
+      <button class="btn" id="btnTeam" data-act="open-team" title="People and email settings" hidden></button>
+      <button class="btn" id="btnCheckin" data-act="open-checkin" title="Check in (c)"></button>
+      <button class="btn" data-act="open-git" title="Update cards from git activity (g)"></button>
+      <button class="btn" data-act="open-standup" title="Write my standup (s)"></button>
+      <button class="iconbtn" data-act="open-settings" title="Settings" aria-label="Settings"></button>
+      <button class="iconbtn" data-act="open-help" title="Help and shortcuts (?)" aria-label="Help and shortcuts"></button>
+      <button class="whochip" id="whoChip" data-act="open-settings" hidden></button>
+    </div>
+  </header>
+
+  <div class="add">
+    <input id="add" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="Add a task: Fix login timeout fri !high @sam #auth" aria-label="Add a task">
+    <button class="btn primary" id="addBtn" data-act="add">Add</button>
+  </div>
+  <div class="preview" id="preview"></div>
+  <div id="notices"></div>
+
+  <div class="viewbar">
+    <div class="tabs" role="tablist" aria-label="View">
+      <button class="tab" role="tab" id="tab-board" data-view="board" aria-selected="true">Board</button>
+      <button class="tab" role="tab" id="tab-focus" data-view="focus" aria-selected="false">Focus</button>
+    </div>
+    <label class="search"><span id="searchIc"></span><input id="q" type="search" placeholder="Filter cards" aria-label="Filter cards" autocomplete="off"></label>
+    <div class="chips" id="filters"></div>
+  </div>
+
+  <main id="board" class="board" aria-label="Board"></main>
+  <main id="focus" class="focus" hidden aria-label="Focus"></main>
+</div>
+
+<div id="gate" class="gate" hidden></div>
+<dialog id="dlg" aria-labelledby="dlgTitle"></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script>
+(function(){
+'use strict';
+
+/* ---------- helpers ---------- */
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Math.random().toString(36).slice(2,9);
+const clamp=(n,a,b)=>Math.min(b,Math.max(a,n));
+const pad=n=>String(n).padStart(2,'0');
+const DAY=864e5;
+const NOW=()=>Date.now();
+
+/* dates are local YYYY-MM-DD strings */
+const iso=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const parseISO=s=>{const p=s.split('-').map(Number);return new Date(p[0],p[1]-1,p[2]);};
+const today=()=>iso(new Date());
+const addDays=(s,n)=>{const d=parseISO(s);d.setDate(d.getDate()+n);return iso(d);};
+const diffDays=(a,b)=>Math.round((parseISO(b)-parseISO(a))/DAY);
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const WDL=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const fmtDate=s=>{const d=parseISO(s);return MON[d.getMonth()]+' '+d.getDate();};
+const daysSince=ts=>Math.max(0,Math.floor((NOW()-ts)/DAY));
+const ago=ts=>{const d=daysSince(ts);return d<1?'today':d+'d ago';};
+function dueLabel(s){
+  const d=diffDays(today(),s);
+  if(d<0)return (-d)+'d overdue';
+  if(d===0)return 'Today';
+  if(d===1)return 'Tomorrow';
+  if(d<7)return WD[parseISO(s).getDay()];
+  return fmtDate(s);
+}
+
+/* ---------- constants ---------- */
+const STATUSES=[{id:'backlog',name:'Backlog'},{id:'todo',name:'To do'},{id:'doing',name:'Doing'},{id:'review',name:'Review'},{id:'done',name:'Done'}];
+const ORDER=STATUSES.map(s=>s.id);
+const SNAME={};STATUSES.forEach(s=>{SNAME[s.id]=s.name;});
+const PRIOS=[{id:'low',name:'Low',n:1},{id:'med',name:'Medium',n:2},{id:'high',name:'High',n:3},{id:'urgent',name:'Urgent',n:4}];
+const PN={},PBYN={};PRIOS.forEach(p=>{PN[p.id]=p.n;PBYN[p.n]=p;});
+const LS='nudge.board.v1';
+
+const ICONS={
+  check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  git:'<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><circle cx="18" cy="9" r="2.3"/><path d="M6 8v8M18 11.3c0 4-8 2.6-11.2 5.6"/>',
+  list:'<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v2.6M12 18.4V21M3 12h2.6M18.4 12H21M5.6 5.6l1.9 1.9M16.5 16.5l1.9 1.9M18.4 5.6l-1.9 1.9M7.5 16.5l-1.9 1.9"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1.1 1-1.1 1.8M12 17h.01"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  x:'<path d="M6 6l12 12M18 6L6 18"/>',
+  copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
+  cal:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  search:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  bell:'<path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  users:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14a5 5 0 0 1 5 5"/>'
+};
+const ic=n=>'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ICONS[n]+'</svg>';
+const prioIcon=n=>'<svg class="pi" viewBox="0 0 14 14" aria-hidden="true">'+[0,1,2,3].map(i=>'<rect x="'+(i*3.6)+'" y="'+(10-i*3)+'" width="2.4" height="'+(4+i*3)+'" rx=".6" fill="currentColor" opacity="'+(i<n?1:.22)+'"/>').join('')+'</svg>';
+const ring=s=>'<span class="ring" data-s="'+s+'">'+(s==='done'?'<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>':'')+'</span>';
+function avatar(name){
+  let h=0;for(let i=0;i<name.length;i++)h=(h*31+name.charCodeAt(i))%360;
+  const parts=name.trim().split(/\s+/);
+  const ini=(parts.length>1?parts[0][0]+parts[1][0]:name.slice(0,2)).toUpperCase();
+  return '<span class="av" style="background:hsl('+h+' 42% 40%)" title="'+esc(name)+'">'+esc(ini)+'</span>';
+}
+
+/* ---------- state ---------- */
+let S=null;
+const ui={view:'board',q:'',who:'',tag:'',addStatus:'todo'};
+// Team mode state. Stays empty in the single-browser version.
+const T={on:false,ready:false,booting:false,me:null,team:[],people:null,notes:[],settings:null,status:null,rt:false,fullAt:0,lastPoll:0,tz:(function(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';}catch(e){return 'UTC';}})()};
+let undoSnap=null,toastTimer=null;
+
+function sampleState(){
+  const t=today(),dow=new Date().getDay();
+  const mon=addDays(t,-((dow+6)%7));
+  const now=NOW(),back=(d,h)=>now-d*DAY-(h||0)*36e5;
+  const cards=[],log=[];let n=0;
+  const mk=(title,status,prio,o)=>{
+    o=o||{};n++;
+    const touch=o.touch==null?1:o.touch;
+    const c={id:uid(),num:n,title:title,notes:o.notes||'',status:status,prio:prio,assignee:o.who||'',
+      due:o.due==null?'':addDays(t,o.due),tags:o.tags||[],
+      checks:(o.checks||[]).map(x=>({t:x[0],done:!!x[1]})),blocked:!!o.blocked,
+      created:back(o.age==null?10:o.age),touched:back(touch,o.h),statusSince:back(o.since==null?touch:o.since),
+      rolled:o.rolled||0,doneAt:status==='done'?back(touch):null};
+    cards.push(c);return c;
+  };
+  const lg=(c,from,to,d)=>log.push({t:back(d),key:'CHK-'+c.num,title:c.title,from:from,to:to});
+  let c;
+  c=mk('Move cart totals to integer cents','done','high',{who:'Priya',tags:['api'],touch:3,age:12});lg(c,'review','done',3);
+  c=mk('Loading skeleton for the payment form','done','med',{who:'Sam',tags:['ui'],touch:2,age:9});lg(c,'review','done',2);
+  c=mk('Fix duplicate charge on double click','done','urgent',{who:'Jo',tags:['bug'],touch:1,age:6});lg(c,'review','done',1);
+  c=mk('Apple Pay button in checkout','review','high',{who:'Sam',tags:['ui'],due:2,touch:1,since:1,checks:[['Button placement',1],['Merchant validation',1],['Fallback for unsupported browsers',1],['Copy review with design',0]]});lg(c,'doing','review',1);
+  mk('Rate limit the orders endpoint','review','med',{who:'Ade',tags:['api'],due:5,touch:0,since:0});
+  mk('Webhook retries with backoff','doing','high',{who:'Priya',tags:['api'],due:3,touch:5,since:6,notes:'Retry 5 times, 30s base, jitter. Dead-letter after that.'});
+  mk('Keyboard navigation for address autocomplete','doing','med',{who:'Sam',tags:['ui'],touch:1,since:2,checks:[['Arrow keys move selection',1],['Enter picks the highlighted address',0],['Escape closes the list',0]]});
+  mk('Checkout error copy pass','doing','low',{who:'Jo',tags:['ui'],touch:0,since:1});
+  mk('Tax wrong on VAT exempt orders','todo','urgent',{who:'Ade',tags:['bug'],due:-1,touch:4});
+  mk('Order receipt email template','todo','med',{who:'Jo',due:6,touch:8,rolled:2,age:30});
+  mk('Load test payment API at 5x traffic','todo','med',{who:'Priya',tags:['infra'],due:9,touch:2,blocked:true,notes:'Waiting on the staging environment from platform.'});
+  mk('Remove legacy coupon endpoint','todo','low',{who:'Ade',tags:['api'],touch:9,rolled:1,age:20});
+  mk('Saved cards page','backlog','med',{tags:['ui'],due:4,touch:6,age:14});
+  mk('Audit log for refunds','backlog','high',{tags:['api'],touch:12,age:25});
+  mk('Klarna as a payment option','backlog','low',{touch:20,age:40});
+  mk('Dark mode for checkout','backlog','low',{tags:['ui'],touch:15,age:33});
+  mk('Slow order history query','backlog','med',{tags:['infra','bug'],touch:4,age:8});
+  const start=addDays(mon,-7);
+  return {v:1,name:'Checkout revamp',key:'CHK',nextNum:n+1,
+    settings:{cycleDays:14,wip:3,staleDays:3},
+    cycle:{n:6,start:start},
+    history:[{n:4,start:addDays(start,-28),end:addDays(start,-15),done:8,total:10},{n:5,start:addDays(start,-14),end:addDays(start,-1),done:9,total:12}],
+    cards:cards,log:log,sample:true};
+}
+function blankState(){
+  const t=today(),dow=new Date().getDay();
+  return {v:1,name:'My board',key:'TSK',nextNum:1,settings:{cycleDays:14,wip:3,staleDays:3},
+    cycle:{n:1,start:addDays(t,-((dow+6)%7))},history:[],cards:[],log:[],sample:false};
+}
+function load(){
+  try{
+    const raw=localStorage.getItem(LS);
+    if(!raw)return null;
+    const o=JSON.parse(raw);
+    return normalize(o);
+  }catch(e){return null;}
+}
+function normalize(o){
+  if(!o||o.v!==1||!Array.isArray(o.cards))return null;
+  o.settings=Object.assign({cycleDays:14,wip:3,staleDays:3},o.settings||{});
+  o.history=Array.isArray(o.history)?o.history:[];
+  o.log=Array.isArray(o.log)?o.log:[];
+  o.name=o.name||'My board';o.key=(o.key||'TSK').toUpperCase();
+  o.cycle=o.cycle&&o.cycle.start?o.cycle:{n:1,start:today()};
+  o.cards.forEach(c=>{
+    c.tags=c.tags||[];c.checks=c.checks||[];c.rolled=c.rolled||0;c.notes=c.notes||'';c.assignee=c.assignee||'';
+    c.due=c.due||'';c.created=c.created||NOW();c.touched=c.touched||c.created;c.statusSince=c.statusSince||c.touched;
+    if(ORDER.indexOf(c.status)<0)c.status='todo';if(!PN[c.prio])c.prio='med';
+  });
+  o.nextNum=o.nextNum||(o.cards.reduce((m,c)=>Math.max(m,c.num||0),0)+1);
+  return o;
+}
+function save(){if(T.on){syncSoon();return;}try{localStorage.setItem(LS,JSON.stringify(S));}catch(e){}}
+function cardMap(){return new Map(S.cards.map(c=>[c.id,JSON.stringify(c)]));}
+function mutate(fn,msg,keepUndo){
+  let snap;
+  if(T.on){
+    // Shared board: remember only the cards this action touched, so undo never disturbs anyone else's work.
+    const before=cardMap();
+    fn();
+    const after=cardMap(),changed={};
+    before.forEach((v,id)=>{if(after.get(id)!==v)changed[id]=v;});
+    after.forEach((v,id)=>{if(!before.has(id))changed[id]=null;});
+    snap=JSON.stringify({team:true,cards:changed});
+  }else{
+    snap=JSON.stringify(S);
+    fn();
+  }
+  save();renderAll();
+  if(msg)toast(msg,snap);else if(keepUndo)undoSnap=snap;
+}
+function commit(){save();renderAll();}
+
+/* ---------- card logic ---------- */
+const keyOf=c=>S.key+'-'+(c.num||'...');
+const cardById=id=>S.cards.find(c=>c.id===id);
+function branchName(c){
+  const slug=c.title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40).replace(/-+$/,'');
+  return S.key.toLowerCase()+'-'+c.num+(slug?'-'+slug:'');
+}
+function setStatus(c,to){
+  if(c.status===to)return;
+  const from=c.status,now=NOW();
+  c.status=to;c.statusSince=now;c.touched=now;
+  if(to==='done'){c.doneAt=now;c.blocked=false;}else c.doneAt=null;
+  if(to==='backlog')c.rolled=0;
+  S.log.push({t:now,key:keyOf(c),title:c.title,from:from,to:to});
+  if(S.log.length>400)S.log=S.log.slice(-400);
+}
+function isStale(c){
+  return (c.status==='doing'||c.status==='review')&&!c.blocked&&daysSince(c.touched)>=S.settings.staleDays;
+}
+/* Priority follows the deadline: a close due date raises the shown priority on its own. */
+function effPrio(c){
+  const base=PN[c.prio];let n=base,why='';
+  if(c.due&&c.status!=='done'){
+    const d=diffDays(today(),c.due);
+    const floor=d<=1?4:d<=3?3:d<=7?2:0;
+    if(floor>n){n=floor;why=d<0?'overdue':d===0?'due today':'due in '+d+'d';}
+  }
+  return {n:n,bumped:n>base,why:why};
+}
+function score(c){
+  const e=effPrio(c);let s=e.n*20;
+  if(c.due){
+    const d=diffDays(today(),c.due);
+    s+=d<0?60+Math.min(-d,10)*2:d===0?50:d<=2?35:d<=5?20:d<=10?8:0;
+  }
+  if(c.status==='review')s+=14;else if(c.status==='doing')s+=10;
+  s+=Math.min(c.rolled,3)*4;
+  if(isStale(c))s+=6;
+  if(c.blocked)s-=100;
+  return s;
+}
+function reasons(c){
+  const r=[];
+  if(c.due){
+    const d=diffDays(today(),c.due);
+    if(d<0)r.push(['Overdue '+(-d)+'d','bad']);
+    else if(d<=3)r.push([d===0?'Due today':d===1?'Due tomorrow':'Due in '+d+'d',d<=1?'bad':'warn']);
+    else if(d<=10)r.push(['Due '+fmtDate(c.due),'']);
+  }
+  if(c.status==='review')r.push(['In review: finish it','good']);
+  else if(c.status==='doing')r.push(['Started '+(daysSince(c.statusSince)<1?'today':daysSince(c.statusSince)+'d ago'),'']);
+  if(isStale(c))r.push(['Quiet '+daysSince(c.touched)+'d','warn']);
+  if(c.rolled)r.push(['Rolled over x'+c.rolled,'']);
+  if(!r.length)r.push([PBYN[PN[c.prio]].name+' priority','']);
+  return r;
+}
+function advance(c,dir){
+  const i=ORDER.indexOf(c.status);
+  let j=c.status==='done'&&dir>0?ORDER.indexOf('doing'):clamp(i+dir,0,ORDER.length-1);
+  if(j===i)return;
+  mutate(()=>setStatus(c,ORDER[j]),keyOf(c)+' moved to '+SNAME[ORDER[j]]);
+}
+const people=()=>T.on?T.team.filter(p=>p.active).map(p=>p.name).sort():Array.from(new Set(S.cards.map(c=>c.assignee).filter(Boolean))).sort();
+const cleanName=v=>{v=v.trim().replace(/\s+/g,' ');return v?v[0].toUpperCase()+v.slice(1):'';};
+
+/* ---------- cycles ---------- */
+function rollCycle(newStart,bump){
+  const done=S.cards.filter(c=>c.status==='done');
+  const open=S.cards.filter(c=>c.status==='todo'||c.status==='doing'||c.status==='review');
+  const nominal=addDays(S.cycle.start,S.settings.cycleDays-1),yest=addDays(newStart,-1);
+  S.history.push({n:S.cycle.n,start:S.cycle.start,end:nominal<yest?nominal:yest,done:done.length,total:done.length+open.length});
+  S.history=S.history.slice(-12);
+  S.cards=S.cards.filter(c=>c.status!=='done');
+  open.forEach(c=>{c.rolled=(c.rolled||0)+1;});
+  S.cycle={n:S.cycle.n+bump,start:newStart};
+  return {done:done.length,rolled:open.length};
+}
+function autoRoll(){
+  if(T.on)return null;
+  const len=S.settings.cycleDays,el=diffDays(S.cycle.start,today());
+  if(el<len)return null;
+  const k=Math.floor(el/len);
+  return rollCycle(addDays(S.cycle.start,k*len),k);
+}
+
+/* ---------- quick add parsing ---------- */
+function parseQuick(raw){
+  let s=' '+raw+' ';
+  const r={prio:null,assignee:'',tags:[],due:'',status:''};
+  s=s.replace(/\s!(urgent|high|medium|med|low|[1-4])(?=\s)/gi,(m,v)=>{
+    v=v.toLowerCase();
+    r.prio={'1':'urgent','2':'high','3':'med','4':'low',urgent:'urgent',high:'high',medium:'med',med:'med',low:'low'}[v];return ' ';
+  });
+  s=s.replace(/\s>(backlog|todo|doing|review|done)(?=\s)/gi,(m,v)=>{r.status=v.toLowerCase();return ' ';});
+  s=s.replace(/\s@([\w.-]+)(?=\s)/g,(m,v)=>{r.assignee=cleanName(v);return ' ';});
+  s=s.replace(/\s#([a-z][\w-]*)(?=\s)/gi,(m,v)=>{r.tags.push(v.toLowerCase());return ' ';});
+  const t=today(),dow=new Date().getDay();
+  const P='(?:\\s+(?:by|due|on|until|before))?\\s+';
+  const tryDate=(src,fn)=>{
+    if(r.due)return;
+    const re=new RegExp(P+src+'(?=\\s)','i');
+    const m=s.match(re);
+    if(!m)return;
+    const d=fn(m);
+    if(d){r.due=d;s=s.replace(re,' ');}
+  };
+  tryDate('(\\d{4}-\\d{2}-\\d{2})',m=>{const d=parseISO(m[1]);return iso(d)===m[1]?m[1]:'';});
+  tryDate('(?:today|tod)',()=>t);
+  tryDate('(?:tomorrow|tmrw|tmr)',()=>addDays(t,1));
+  tryDate('in\\s+(\\d+)\\s*(d|days?|w|wks?|weeks?)',m=>addDays(t,+m[1]*(/^w/i.test(m[2])?7:1)));
+  tryDate('next\\s+week',()=>addDays(t,(8-dow)%7||7));
+  tryDate('eow',()=>addDays(t,(5-dow+7)%7));
+  tryDate('(?:next\\s+)?(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)',m=>{
+    const idx=WD.findIndex(w=>w.toLowerCase()===m[1].slice(0,3).toLowerCase());
+    let delta=(idx-dow+7)%7;if(delta===0)delta=7;return addDays(t,delta);
+  });
+  const mons=MON.map(x=>x.toLowerCase()).join('|');
+  const md=(mo,dd)=>{
+    const mi=MON.findIndex(x=>x.toLowerCase()===mo.slice(0,3).toLowerCase());
+    const day=+dd;if(mi<0||day<1||day>31)return '';
+    const y=new Date().getFullYear();
+    let d=new Date(y,mi,day);if(d.getMonth()!==mi)return '';
+    if(iso(d)<t)d=new Date(y+1,mi,day);
+    return iso(d);
+  };
+  tryDate('('+mons+')[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?',m=>md(m[1],m[2]));
+  tryDate('(\\d{1,2})(?:st|nd|rd|th)?\\s+('+mons+')[a-z]*',m=>md(m[2],m[1]));
+  r.title=s.replace(/\s+/g,' ').trim();
+  return r;
+}
+function addFromInput(){
+  const inp=$('#add'),p=parseQuick(inp.value);
+  if(!p.title){inp.focus();return;}
+  const status=p.status||ui.addStatus||'todo';
+  let owner=null,ownerNote='';
+  if(T.on&&p.assignee){
+    owner=resolveMention(p.assignee);
+    if(!owner)ownerNote=' No one on the team matches @'+p.assignee+'.';
+    else if(!isPM()&&owner.id!==T.me.id){owner=null;ownerNote=' Only the project manager can give tasks to other people.';}
+  }
+  let title=p.title,longNote='';
+  if(title.length>200){longNote=title.slice(0,5000);title=title.slice(0,197).trimEnd()+'...';}
+  let created;
+  mutate(()=>{
+    const now=NOW();
+    created={id:T.on?newId():uid(),num:T.on?0:S.nextNum++,title:title,notes:longNote,status:status,prio:p.prio||'med',
+      assignee:T.on?(owner?owner.name:''):p.assignee,assigneeId:owner?owner.id:null,reviewerId:null,due:p.due,
+      tags:p.tags,checks:[],blocked:false,created:now,touched:now,statusSince:now,rolled:0,doneAt:status==='done'?now:null};
+    S.cards.push(created);
+    S.log.push({t:now,key:keyOf(created),title:created.title,from:'',to:status});
+  },T.on?'Added to '+SNAME[status]+'.'+ownerNote:'Added '+S.key+'-'+S.nextNum+' to '+SNAME[status]);
+  inp.value='';ui.addStatus='todo';renderPreview();inp.focus();
+}
+
+/* ---------- checks: what needs a nudge ---------- */
+function checkinItems(){
+  const t=today(),out=[];
+  S.cards.forEach(c=>{
+    if(c.status==='done')return;
+    const d=c.due?diffDays(t,c.due):null;
+    if(d!==null&&d<0)out.push({c:c,kind:'overdue',msg:'Overdue by '+(-d)+' day'+(-d>1?'s':'')});
+    else if(isStale(c))out.push({c:c,kind:'stale',msg:'No activity for '+daysSince(c.touched)+' days in '+SNAME[c.status]});
+    else if(c.status==='backlog'&&d!==null&&d<=7)out.push({c:c,kind:'pull',msg:'Due '+dueLabel(c.due)+', still in the backlog'});
+    else if(c.status==='todo'&&c.rolled>=2&&!c.blocked)out.push({c:c,kind:'rolled',msg:'Rolled over '+c.rolled+' cycles in a row'});
+  });
+  out.sort((a,b)=>score(b.c)-score(a.c));
+  return out;
+}
+const KIND_LABEL={overdue:['Overdue','bad'],stale:['Gone quiet','warn'],pull:['Due soon','warn'],rolled:['Keeps rolling','']};
+const KIND_ACTIONS={
+  overdue:[['done','Done',1],['push3','Push 3 days'],['push7','Push 1 week'],['drop','Drop']],
+  stale:[['still','Still on it',1],['done','Done'],['blocked','Blocked'],['todo','Back to To do']],
+  pull:[['pull','Pull into this cycle',1],['push7','Push 1 week']],
+  rolled:[['start','Start now',1],['backlog','To backlog'],['drop','Drop']]
+};
+function ciApply(action,c){
+  const t=today(),base=c.due&&c.due>t?c.due:t;
+  switch(action){
+    case 'still':c.touched=NOW();break;
+    case 'done':setStatus(c,'done');break;
+    case 'blocked':c.blocked=true;c.touched=NOW();break;
+    case 'todo':setStatus(c,'todo');break;
+    case 'push3':c.due=addDays(base,3);c.touched=NOW();break;
+    case 'push7':c.due=addDays(base,7);c.touched=NOW();break;
+    case 'drop':S.cards=S.cards.filter(x=>x!==c);break;
+    case 'pull':setStatus(c,'todo');break;
+    case 'start':setStatus(c,'doing');break;
+    case 'backlog':setStatus(c,'backlog');break;
+  }
+}
+
+/* ---------- git sync ---------- */
+function parseGit(text){
+  const key=S.key.replace(/[^A-Z0-9]/gi,'');
+  const re=new RegExp('\\b'+key+'[-_ ]?(\\d+)\\b','gi');
+  const closeRe=/\b(clos(e[sd]?)|fix(e[sd])?|resolv(e[sd]?)|finish(e[sd])?|complet(e[sd]?)|done)\b\W{0,3}$/i;
+  const rank={doing:1,review:2,done:3};
+  const found=new Map();
+  text.split(/\r?\n/).forEach(line=>{
+    if(!line.trim())return;
+    const merged=/\bmerge(d)?\s+pull\s+request\b/i.test(line)||/\bmerged\b/i.test(line);
+    const review=/\b(ready for review|for review|review|open(ed)? (a )?pr)\b/i.test(line);
+    let m;re.lastIndex=0;
+    while((m=re.exec(line))){
+      const before=line.slice(0,m.index);
+      const to=closeRe.test(before)||merged?'done':review?'review':'doing';
+      const num=+m[1],cur=found.get(num);
+      if(!cur||rank[to]>rank[cur.to])found.set(num,{to:to,line:line.trim()});
+    }
+  });
+  const moves=[],missing=[],same=[];
+  found.forEach((v,num)=>{
+    const c=S.cards.find(x=>x.num===num);
+    if(!c){missing.push(S.key+'-'+num);return;}
+    if(ORDER.indexOf(v.to)>ORDER.indexOf(c.status))moves.push({c:c,to:v.to,line:v.line});
+    else same.push(keyOf(c));
+  });
+  moves.sort((a,b)=>a.c.num-b.c.num);
+  return {moves:moves,missing:missing,same:same,total:found.size};
+}
+
+/* ---------- standup ---------- */
+function prevWorkdayStart(){
+  const d=parseISO(today());
+  do{d.setDate(d.getDate()-1);}while(d.getDay()===0||d.getDay()===6);
+  return d.getTime();
+}
+function standupText(){
+  const since=prevWorkdayStart(),sd=new Date(since);
+  const label=diffDays(iso(sd),today())===1?'Since yesterday':'Since '+WDL[sd.getDay()];
+  const doneKeys=new Set(),done=[],rev=[];
+  S.log.filter(l=>l.t>=since).forEach(l=>{
+    if(l.to==='done'&&!doneKeys.has(l.key)){doneKeys.add(l.key);done.push(l);}
+  });
+  S.log.filter(l=>l.t>=since&&l.to==='review').forEach(l=>{
+    if(!doneKeys.has(l.key)&&!rev.some(x=>x.key===l.key))rev.push(l);
+  });
+  const open=S.cards.filter(c=>!c.blocked);
+  let now=open.filter(c=>c.status==='doing'||c.status==='review').sort((a,b)=>score(b)-score(a));
+  if(!now.length)now=open.filter(c=>c.status==='todo').sort((a,b)=>score(b)-score(a)).slice(0,3);
+  const blocked=S.cards.filter(c=>c.blocked&&c.status!=='done');
+  const d=new Date();
+  const L=['Standup, '+WD[d.getDay()]+' '+MON[d.getMonth()]+' '+d.getDate(),'',label];
+  done.forEach(l=>L.push('- Done: '+l.key+' '+l.title));
+  rev.forEach(l=>L.push('- Sent to review: '+l.key+' '+l.title));
+  if(!done.length&&!rev.length)L.push('- Nothing moved');
+  L.push('','Today');
+  now.forEach(c=>L.push('- '+keyOf(c)+' '+c.title+' ('+SNAME[c.status]+(c.due?', due '+dueLabel(c.due):'')+')'));
+  if(!now.length)L.push('- Nothing planned yet');
+  L.push('','Blocked');
+  blocked.forEach(c=>L.push('- '+keyOf(c)+' '+c.title));
+  if(!blocked.length)L.push('- None');
+  return L.join('\n');
+}
+
+/* ---------- clipboard + toast ---------- */
+function copyText(text){
+  const fallback=()=>{
+    const ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;opacity:0';
+    document.body.appendChild(ta);ta.select();let ok=false;
+    try{ok=document.execCommand('copy');}catch(e){}
+    ta.remove();return ok;
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(text).then(()=>true,()=>fallback());
+  }
+  return Promise.resolve(fallback());
+}
+function toast(msg,snap){
+  const el=$('#toast');
+  el.innerHTML='<span>'+esc(msg)+'</span>'+(snap?'<button class="btn small" data-act="undo">Undo</button>':'');
+  undoSnap=snap||null;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),6500);
+}
+function undo(){
+  if(!undoSnap)return;
+  const o=JSON.parse(undoSnap);
+  if(o.team){
+    Object.keys(o.cards).forEach(id=>{
+      const prev=o.cards[id];
+      S.cards=S.cards.filter(c=>c.id!==id);
+      if(prev)S.cards.push(JSON.parse(prev));
+    });
+  }else S=normalize(o);
+  undoSnap=null;
+  save();renderAll();
+  $('#toast').classList.remove('show');
+  if(dlg.open&&dlg.dataset.kind==='checkin')dlg.innerHTML=checkinHTML();
+}
+
+function setTitle(){
+  const n=T.on?T.notes.filter(x=>!x.read_at).length:0;
+  document.title=(n?'('+n+') ':'')+S.name+' · Nudge Board';
+}
+/* ---------- render: masthead ---------- */
+function renderTools(){
+  const n=checkinItems().length;
+  $('#btnCheckin').innerHTML=ic('check')+'<span class="lbl-t">Check in</span>'+(n?'<span class="badge">'+n+'</span>':'');
+  $('[data-act="open-git"]').innerHTML=ic('git')+'<span class="lbl-t">Git sync</span>';
+  $('[data-act="open-standup"]').innerHTML=ic('list')+'<span class="lbl-t">Standup</span>';
+  $('[data-act="open-settings"]').innerHTML=ic('gear');
+  $('[data-act="open-help"]').innerHTML=ic('help');
+  $('#searchIc').innerHTML=ic('search');
+  const live=T.on&&T.ready;
+  $('#btnBell').hidden=!live;$('#btnTeam').hidden=!(live&&isPM());$('#whoChip').hidden=!live;
+  if(live){
+    const n=T.notes.filter(x=>!x.read_at).length;
+    $('#btnBell').innerHTML=ic('bell')+(n?'<span class="badge" style="position:absolute;margin:-14px 0 0 12px">'+(n>99?'99+':n)+'</span>':'');
+    $('#btnTeam').innerHTML=ic('users')+'<span class="lbl-t">Team</span>';
+    $('#whoChip').innerHTML=avatar(T.me.name);$('#whoChip').title=T.me.name+' ('+(T.me.role==='pm'?'project manager':'member')+'). Your settings.';
+  }
+}
+function renderPulse(){
+  $('#boardName').textContent=S.name;
+  setTitle();
+  const len=S.settings.cycleDays,t=today(),el=diffDays(S.cycle.start,t);
+  const nw=new Date(),frac=(nw.getHours()*60+nw.getMinutes())/1440;
+  const elapsed=clamp(el+frac,0,len);
+  const inC=S.cards.filter(c=>c.status!=='backlog');
+  const total=inC.length,cnt=s=>inC.filter(c=>c.status===s).length;
+  const done=cnt('done'),rev=cnt('review'),doing=cnt('doing');
+  const donePct=total?done/total*100:0;
+  const flyPct=total?(.7*rev+.3*doing)/total*100:0;
+  const timeP=elapsed/len;
+  let tone='',label='';
+  if(!total)label='No cards yet';
+  else if(done===total){tone='good';label='All done';}
+  else if(elapsed<1.5)label='Just started';
+  else{
+    const r=((donePct+flyPct)/100)/Math.max(timeP,.05);
+    if(r>=.9){tone='good';label='On track';}else if(r>=.65){tone='warn';label='At risk';}else{tone='bad';label='Behind';}
+  }
+  const daysLeft=Math.max(0,len-Math.ceil(elapsed));
+  const last=S.history[S.history.length-1];
+  const tip='Bar shows finished work. The lighter part counts Review at 70% and Doing at 30%. The vertical mark is how much of the cycle has passed.';
+  $('#pulse').innerHTML=
+    '<div class="pl-top"><span class="cy">Cycle '+S.cycle.n+'</span><span class="muted mono" style="font-size:12px">'+fmtDate(S.cycle.start)+' to '+fmtDate(addDays(S.cycle.start,len-1))+'</span>'+
+    (last?'<span class="muted" style="font-size:12px">Last cycle: '+last.done+' of '+last.total+' done</span>':'')+'</div>'+
+    '<div class="bar" title="'+esc(tip)+'" role="img" aria-label="'+done+' of '+total+' cards done, '+Math.round(timeP*100)+' percent of the cycle has passed">'+
+      '<i class="b-done" style="width:'+donePct+'%"></i><i class="b-fly" style="left:'+donePct+'%;width:'+flyPct+'%"></i><i class="tick" style="left:'+(timeP*100)+'%"></i></div>'+
+    '<div class="pl-bot"><span><b>'+done+'</b> of '+total+' done</span><span class="pill '+tone+'">'+label+'</span><span class="muted">'+daysLeft+' day'+(daysLeft===1?'':'s')+' left</span></div>';
+}
+function renderNotices(){
+  const items=checkinItems(),el=$('#notices');let h='';
+  if(window.NUDGE_CONFIG&&!TEAM_CONFIGURED&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname))
+    h+='<div class="notice warn"><span><b>Team mode is off.</b> This board is saved only in this browser. To share it with your team, fill in config.js (docs/SETUP.md, step 4).</span></div>';
+  if(S.sample)h+='<div class="notice"><span><b>Example board.</b> Play with it, then clear it and add your own cards.</span><button class="btn small" data-act="clear-all">Clear examples</button></div>';
+  if(items.length){
+    const by={};items.forEach(i=>{by[i.kind]=(by[i.kind]||0)+1;});
+    const parts=[];
+    if(by.overdue)parts.push(by.overdue+' overdue');
+    if(by.stale)parts.push(by.stale+' gone quiet');
+    if(by.pull)parts.push(by.pull+' due soon in backlog');
+    if(by.rolled)parts.push(by.rolled+' keep rolling over');
+    h+='<div class="notice warn"><span><b>'+items.length+' card'+(items.length>1?'s':'')+' need a nudge:</b> '+parts.join(', ')+'.</span><button class="btn small" data-act="open-checkin">Check in (10 seconds)</button></div>';
+  }
+  el.innerHTML=h;
+}
+function renderFilters(){
+  const ppl=people();
+  const tagCount={};S.cards.forEach(c=>c.tags.forEach(t=>{tagCount[t]=(tagCount[t]||0)+1;}));
+  const tags=Object.keys(tagCount).sort((a,b)=>tagCount[b]-tagCount[a]).slice(0,7);
+  if(ui.who&&ppl.indexOf(ui.who)<0)ui.who='';
+  if(ui.tag&&!tagCount[ui.tag])ui.tag='';
+  $('#filters').innerHTML=ppl.map(p=>'<button class="who'+(ui.who===p?' on':'')+'" data-who="'+esc(p)+'" title="Show only '+esc(p)+'" aria-pressed="'+(ui.who===p)+'">'+avatar(p)+'</button>').join('')+
+    tags.map(t=>'<button class="chip'+(ui.tag===t?' on':'')+'" data-tag="'+esc(t)+'" aria-pressed="'+(ui.tag===t)+'">#'+esc(t)+'</button>').join('');
+}
+function visible(c){
+  if(ui.who&&c.assignee!==ui.who)return false;
+  if(ui.tag&&c.tags.indexOf(ui.tag)<0)return false;
+  if(ui.q){
+    const q=ui.q.toLowerCase();
+    if(!(c.title.toLowerCase().includes(q)||keyOf(c).toLowerCase().includes(q)||c.assignee.toLowerCase().includes(q)||c.tags.some(t=>t.includes(q))))return false;
+  }
+  return true;
+}
+
+/* ---------- render: board ---------- */
+function boardCard(c){
+  const e=effPrio(c),s=c.status;
+  const nextName=s==='done'?'Reopen':{backlog:'Pull into To do',todo:'Start',doing:'Send to Review',review:'Mark done'}[s];
+  const chips=[];
+  if(c.blocked)chips.push('<span class="chip bad">Blocked</span>');
+  if(c.due&&s!=='done'){
+    const d=diffDays(today(),c.due);
+    chips.push('<span class="chip '+(d<0?'bad':d<=1?'warn':'')+'" title="Due '+fmtDate(c.due)+'">'+ic('cal')+esc(dueLabel(c.due))+'</span>');
+  }
+  if(isStale(c))chips.push('<button class="chip warn" data-act="still" title="Click to confirm you are still on this">Quiet '+daysSince(c.touched)+'d, still on it?</button>');
+  else if((s==='doing'||s==='review')&&daysSince(c.statusSince)>=1)chips.push('<span class="chip" title="Time in '+SNAME[s]+'">'+daysSince(c.statusSince)+'d in '+SNAME[s].toLowerCase()+'</span>');
+  if(c.checks.length){const dn=c.checks.filter(x=>x.done).length;chips.push('<span class="chip '+(dn===c.checks.length?'good':'')+'" title="Checklist">'+dn+'/'+c.checks.length+'</span>');}
+  if(c.rolled)chips.push('<span class="chip" title="Rolled over from '+c.rolled+' earlier cycle'+(c.rolled>1?'s':'')+'">&#8635;'+c.rolled+'</span>');
+  c.tags.slice(0,3).forEach(t=>chips.push('<span class="chip">#'+esc(t)+'</span>'));
+  const pname=PBYN[e.n].name+' priority'+(e.bumped?' (raised because '+e.why+')':'');
+  return '<article class="card'+(c.blocked?' is-blocked':'')+'" data-id="'+c.id+'" tabindex="0" draggable="true" aria-label="'+esc(keyOf(c)+' '+c.title)+'">'+
+    '<div class="ctop"><button class="ringbtn" data-act="advance" title="'+nextName+'" aria-label="'+nextName+'">'+ring(s)+'</button>'+
+    '<span class="key">'+esc(keyOf(c))+'</span><span class="prio p'+e.n+'" title="'+esc(pname)+'">'+prioIcon(e.n)+(e.bumped?'<b>&uarr;</b>':'')+'</span>'+
+    '<span class="grow"></span>'+(c.assignee?avatar(c.assignee):'')+'</div>'+
+    '<div class="ctitle">'+esc(c.title)+'</div>'+
+    (chips.length?'<div class="cmeta">'+chips.join('')+'</div>':'')+'</article>';
+}
+const EMPTY={backlog:'Ideas and someday tasks live here.',todo:'Type a task above to add one.',doing:'Nothing in progress.',review:'Nothing waiting on review.',done:'Finished cards land here.'};
+function renderBoard(){
+  const ae=document.activeElement,keep=ae&&ae.classList&&ae.classList.contains('card')?ae.dataset.id:null;
+  $('#board').innerHTML=STATUSES.map(st=>{
+    const all=S.cards.filter(c=>c.status===st.id);
+    const list=all.filter(visible).sort(st.id==='done'?(a,b)=>b.doneAt-a.doneAt:(a,b)=>score(b)-score(a)||a.num-b.num);
+    let count=String(all.length),cls='',sub='';
+    if(st.id==='backlog')sub='<p class="sub">Not in this cycle</p>';
+    if(st.id==='doing'){
+      count=all.length+'/'+S.settings.wip;
+      if(all.length>S.settings.wip){cls=' over';sub='<p class="sub warn">Over the limit. Finish something before you start more.</p>';}
+    }
+    if(st.id==='done')sub='<p class="sub">Archived when the cycle ends</p>';
+    return '<section class="col'+(st.id==='backlog'?' backlog':'')+'" data-status="'+st.id+'" aria-label="'+st.name+'">'+
+      '<header class="chead"><h2>'+st.name+'</h2><span class="count'+cls+'"'+(st.id==='doing'?' title="Work in progress limit"':'')+'>'+count+'</span><span class="grow"></span>'+
+      '<button class="iconbtn sm" data-act="add-to" data-status="'+st.id+'" aria-label="Add a card to '+st.name+'" title="Add to '+st.name+'">'+ic('plus')+'</button></header>'+sub+
+      '<div class="cards">'+(list.map(boardCard).join('')||'<div class="empty">'+(all.length?'No matches.':EMPTY[st.id])+'</div>')+'</div></section>';
+  }).join('');
+  if(keep){const el=$('.card[data-id="'+keep+'"]',$('#board'));if(el)el.focus({preventScroll:true});}
+}
+
+/* ---------- render: focus ---------- */
+function renderFocus(){
+  const pool=S.cards.filter(c=>(c.status==='todo'||c.status==='doing'||c.status==='review')&&!c.blocked&&visible(c)).sort((a,b)=>score(b)-score(a)||a.num-b.num);
+  const next=pool.slice(0,5);
+  const blocked=S.cards.filter(c=>c.blocked&&c.status!=='done'&&visible(c));
+  const dl=S.cards.filter(c=>c.due&&c.status!=='done'&&visible(c)).sort((a,b)=>a.due<b.due?-1:a.due>b.due?1:score(b)-score(a));
+  const t=today();
+  const groups=[['Overdue',dl.filter(c=>c.due<t)],['Next 7 days',dl.filter(c=>c.due>=t&&diffDays(t,c.due)<=7)],['Later',dl.filter(c=>diffDays(t,c.due)>7)]];
+  const btnFor=c=>{
+    const l={backlog:'Pull in',todo:'Start',doing:'To review',review:'Done'}[c.status];
+    return '<button class="btn small'+(c.status==='review'?' primary':'')+'" data-act="advance-f">'+l+'</button>';
+  };
+  const nextHTML=next.length?'<ul class="list">'+next.map((c,i)=>
+    '<li class="frow" data-id="'+c.id+'"><span class="rank">'+(i+1)+'</span><div><div class="ftitle"><span class="key">'+esc(keyOf(c))+'</span> '+esc(c.title)+'</div>'+
+    '<div class="why">'+reasons(c).map(r=>'<span class="chip '+r[1]+'">'+esc(r[0])+'</span>').join('')+'</div></div>'+btnFor(c)+'</li>').join('')+'</ul>'
+    :'<div class="fempty">Nothing to do right now. Add a task above or pull something in from the backlog.</div>';
+  const blockedHTML=blocked.length?'<h3>Blocked</h3><ul class="list">'+blocked.map(c=>
+    '<li class="frow" data-id="'+c.id+'"><span class="rank">!</span><div><div class="ftitle"><span class="key">'+esc(keyOf(c))+'</span> '+esc(c.title)+'</div></div><button class="btn small" data-act="unblock">Unblocked</button></li>').join('')+'</ul>':'';
+  const dlHTML=groups.filter(g=>g[1].length).map(g=>
+    '<h3>'+g[0]+'</h3><ul class="list">'+g[1].map(c=>{
+      const d=diffDays(t,c.due);
+      return '<li class="drow" data-id="'+c.id+'"><span class="dd">'+fmtDate(c.due)+'</span><div><div class="ftitle">'+esc(c.title)+'</div>'+
+        '<div class="why"><span class="chip">'+esc(keyOf(c))+'</span><span class="chip">'+SNAME[c.status]+'</span><span class="chip '+(d<0?'bad':d<=1?'warn':'')+'">'+esc(dueLabel(c.due))+'</span></div></div>'+
+        (c.status==='backlog'?'<button class="btn small" data-act="advance-f">Pull in</button>':'')+'</li>';
+    }).join('')+'</ul>').join('')||'<div class="fempty">No deadlines set. Add a date to a task, like "fri" or "in 3d".</div>';
+  $('#focus').innerHTML=
+    '<section class="panel"><h2>Do next</h2><p class="lede">Ranked by deadline, priority, and how close it is to finished. Blocked cards are left out.</p>'+nextHTML+blockedHTML+'</section>'+
+    '<section class="panel"><h2>Deadlines</h2><p class="lede">Everything with a due date, soonest first.</p>'+dlHTML+'</section>';
+}
+
+function renderPreview(){
+  const raw=$('#add').value,el=$('#preview');
+  const p=parseQuick(raw);
+  const idle=!raw.trim()&&ui.addStatus==='todo';
+  el.className='preview'+(idle?' idle':'');
+  if(idle){
+    el.innerHTML='<span>Only the title is needed. <kbd>!high</kbd> priority <kbd>@sam</kbd> owner <kbd>#api</kbd> tag <kbd>fri</kbd> <kbd>in 3d</kbd> <kbd>oct 12</kbd> due date</span>';
+    return;
+  }
+  const st=p.status||ui.addStatus;
+  const c=[];
+  c.push(ui.addStatus!=='todo'&&!p.status?'<button class="chip good" data-act="reset-target" title="Back to To do">Adding to '+SNAME[st]+' &times;</button>':'<span class="chip">&rarr; '+SNAME[st]+'</span>');
+  if(p.prio)c.push('<span class="chip prio p'+PN[p.prio]+'">'+prioIcon(PN[p.prio])+PBYN[PN[p.prio]].name+'</span>');
+  if(p.due)c.push('<span class="chip">'+ic('cal')+'Due '+WD[parseISO(p.due).getDay()]+' '+fmtDate(p.due)+'</span>');
+  if(p.assignee){
+    if(T.on){const o=resolveMention(p.assignee);c.push(o?'<span class="chip">@'+esc(o.name)+'</span>':'<span class="chip warn">@'+esc(p.assignee)+' not on the team</span>');}
+    else c.push('<span class="chip">@'+esc(p.assignee)+'</span>');
+  }
+  p.tags.forEach(t=>c.push('<span class="chip">#'+esc(t)+'</span>'));
+  if(!p.title)c.push('<span>Add a title to save it.</span>');
+  el.innerHTML=c.join('');
+}
+
+function renderAll(){
+  renderTools();renderPulse();renderNotices();renderFilters();
+  if(ui.view==='board')renderBoard();else renderFocus();
+  renderPreview();
+}
+function setView(v){
+  ui.view=v;
+  $('#board').hidden=v!=='board';$('#focus').hidden=v!=='focus';
+  $$('.tab').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.view===v)));
+  renderAll();
+}
+
+/* ---------- dialogs ---------- */
+const dlg=$('#dlg');
+function openDialog(kind,html,id){
+  dlg.dataset.kind=kind;dlg.dataset.id=id||'';dlg.innerHTML=html;
+  if(!dlg.open)dlg.showModal();
+}
+const head=(title,sub)=>'<div class="dh"><h2 id="dlgTitle">'+title+'</h2>'+(sub?'<span class="muted">'+sub+'</span>':'')+'<button class="iconbtn" data-act="close" aria-label="Close">'+ic('x')+'</button></div>';
+
+function checksHTML(c){
+  if(!c.checks.length)return '';
+  return c.checks.map((k,i)=>'<div class="check"><input type="checkbox" id="ck'+i+'" data-check="'+i+'"'+(k.done?' checked':'')+'><label for="ck'+i+'" class="'+(k.done?'done':'')+'">'+esc(k.t)+'</label><button class="iconbtn sm" data-rmcheck="'+i+'" aria-label="Remove step">'+ic('x')+'</button></div>').join('');
+}
+function prioHint(c){
+  const e=effPrio(c);
+  return e.bumped?'Shown as '+PBYN[e.n].name+' because it is '+e.why+'.':'';
+}
+function openCard(id){
+  const c=cardById(id);if(!c)return;
+  const opts=(arr,cur)=>arr.map(o=>'<option value="'+o.id+'"'+(o.id===cur?' selected':'')+'>'+o.name+'</option>').join('');
+  openDialog('card',
+    '<div class="dh"><span class="key" id="dlgTitle">'+esc(keyOf(c))+'</span><span class="muted" id="cardAge">Created '+ago(c.created)+', '+SNAME[c.status]+' since '+ago(c.statusSince)+'</span><button class="iconbtn" data-act="close" aria-label="Close">'+ic('x')+'</button></div>'+
+    '<div class="db">'+
+      '<input id="f-title" class="title-input" value="'+esc(c.title)+'" aria-label="Title" maxlength="200">'+
+      '<div class="grid2">'+
+        '<div class="field"><label for="f-status">Status</label><select id="f-status">'+opts(STATUSES,c.status)+'</select></div>'+
+        '<div class="field"><label for="f-prio">Priority</label><select id="f-prio">'+opts(PRIOS.slice().reverse(),c.prio)+'</select></div>'+
+        (T.on?ownerFieldsHTML(c):'<div class="field"><label for="f-who">Owner</label><input id="f-who" list="people" value="'+esc(c.assignee)+'" placeholder="Nobody yet" autocomplete="off"><datalist id="people">'+people().map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist></div>')+
+        '<div class="field"><label for="f-due">Due</label><input type="date" id="f-due" value="'+esc(c.due)+'"></div>'+
+      '</div>'+
+      '<div class="row"><span class="hint warn" id="prioHint">'+esc(prioHint(c))+'</span><span class="grow"></span>'+
+        '<button class="btn small" data-due="0">Today</button><button class="btn small" data-due="1">Tomorrow</button><button class="btn small" data-due="7">Next week</button><button class="btn small" data-due="">No date</button></div>'+
+      '<div class="field"><label for="f-tags">Tags</label><input id="f-tags" value="'+esc(c.tags.join(' '))+'" placeholder="api ui bug" autocomplete="off"></div>'+
+      '<div class="field"><label for="f-notes">Notes</label><textarea id="f-notes" rows="3" maxlength="5000" placeholder="Links, context, decisions">'+esc(c.notes)+'</textarea></div>'+
+      '<div class="field"><span class="lbl">Checklist</span><div id="checks">'+checksHTML(c)+'</div><input id="f-check" maxlength="200" placeholder="Add a step and press Enter" autocomplete="off"><span class="hint">Ticking the first step starts the card for you.</span></div>'+
+      '<label class="toggle"><input type="checkbox" id="f-blocked"'+(c.blocked?' checked':'')+'>Blocked, waiting on something</label>'+
+    '</div>'+
+    '<div class="df"><button class="btn" data-act="copy-branch" title="Name your git branch this so commits find the card">'+ic('git')+'<span class="mono" style="font-size:12px">'+esc(branchName(c))+'</span>'+ic('copy')+'</button><span class="grow"></span><button class="btn danger" data-act="delete">Delete</button><button class="btn primary" data-act="close">Close</button></div>',c.id);
+}
+function ownerFieldsHTML(c){
+  const pm=isPM(),me=T.me.id;
+  const owners=T.team.filter(p=>p.active&&(pm||p.id===me||p.id===c.assigneeId));
+  const canPick=pm||!c.assigneeId||c.assigneeId===me;
+  const ownerOpts='<option value="">(nobody)</option>'+owners.filter(p=>pm||p.id===me||p.id===c.assigneeId).map(p=>'<option value="'+p.id+'"'+(p.id===c.assigneeId?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+  const revOpts='<option value="">(board default)</option>'+T.team.filter(p=>p.active||p.id===c.reviewerId).map(p=>'<option value="'+p.id+'"'+(p.id===c.reviewerId?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+  return '<div class="field"><label for="f-who">Owner</label><select id="f-who"'+(canPick?'':' disabled')+'>'+ownerOpts+'</select></div>'+
+    '<div class="field"><label for="f-rev">Reviewer</label><select id="f-rev"'+(pm?'':' disabled')+'>'+revOpts+'</select></div>';
+}
+function checkinHTML(){
+  const items=checkinItems();
+  let body;
+  if(!items.length)body='<p style="margin:0">All clear. Nothing is stale, overdue, or waiting to be pulled in.</p>';
+  else body=items.map(i=>{
+    const k=KIND_LABEL[i.kind];
+    return '<div class="ci"><div class="ci-head"><span class="chip '+k[1]+'">'+k[0]+'</span><span class="ci-title"><span class="key">'+esc(keyOf(i.c))+'</span> '+esc(i.c.title)+'</span></div>'+
+      '<div class="hint">'+esc(i.msg)+(i.c.assignee?' &middot; '+esc(i.c.assignee):'')+'</div>'+
+      '<div class="row">'+KIND_ACTIONS[i.kind].map(a=>'<button class="btn small'+(a[2]?' primary':'')+'" data-act="ci" data-do="'+a[0]+'" data-id="'+i.c.id+'">'+a[1]+'</button>').join('')+'</div></div>';
+  }).join('');
+  return head('Check in',items.length?items.length+' to go':'')+'<div class="db">'+body+'</div>'+
+    '<div class="df"><span class="hint">Nothing here changes unless you click. Anything you skip stays on the list.</span><span class="grow"></span>'+(undoSnap?'<button class="btn small" data-act="undo">Undo last</button>':'')+'<button class="btn primary" data-act="close">Close</button></div>';
+}
+function openCheckin(){
+  undoSnap=null;$('#toast').classList.remove('show');
+  openDialog('checkin',checkinHTML());
+}
+const GIT_EXAMPLE='a1b2c3d CHK-12 remove legacy coupon endpoint\n9f8e7d6 Fixes CHK-9\n5c4b3a2 feat: apple pay merchant checks (CHK-4)\nMerge pull request #41 from acme/chk-4-apple-pay';
+function gitHTML(){
+  return head('Update cards from git')+
+    '<div class="db"><p style="margin:0">Paste your recent commits, branch names, or pull request titles. Cards that are mentioned move forward without you touching the board.</p>'+
+    '<textarea id="git-in" class="mono-area" rows="6" placeholder="'+esc(GIT_EXAMPLE)+'"></textarea>'+
+    '<div class="row"><button class="btn primary" data-act="git-read">Read it</button><button class="btn" data-act="git-example">Paste an example</button><span class="grow"></span></div>'+
+    '<div id="git-out"></div>'+
+    '<div class="hint">Get the log with <span class="code">git log --oneline --since="3 days ago"</span>. A closing word right before the key (<span class="code">Fixes '+esc(S.key)+'-9</span>) or a merged pull request marks a card done. The word "review" sends it to Review. Any other mention starts it. Cards never move backwards.</div></div>';
+}
+function gitResultHTML(res){
+  if(!res.total)return '<p class="hint" style="margin:0">No card keys like '+esc(S.key)+'-12 found in that text.</p>';
+  let h='';
+  if(res.moves.length){
+    h+='<div class="lbl" style="margin-bottom:4px">Proposed moves</div>'+res.moves.map(m=>
+      '<label class="gitrow"><input type="checkbox" data-gitpick="'+m.c.num+'" checked><div class="grow"><div><span class="key">'+esc(keyOf(m.c))+'</span> <b>'+esc(m.c.title)+'</b></div><div class="hint">'+SNAME[m.c.status]+' &rarr; <b>'+SNAME[m.to]+'</b></div><div class="code">'+esc(m.line)+'</div></div></label>').join('')+
+      '<div class="row" style="margin-top:8px"><button class="btn primary" data-act="git-apply">Apply '+res.moves.length+' move'+(res.moves.length>1?'s':'')+'</button></div>';
+  }else h+='<p style="margin:0">Nothing to move. Those cards are already as far along as the commits say.</p>';
+  if(res.missing.length)h+='<p class="hint" style="margin:8px 0 0">Not on this board: '+res.missing.map(esc).join(', ')+'</p>';
+  return h;
+}
+function standupHTML(){
+  return head('Your standup')+
+    '<div class="db"><textarea id="standup" class="mono-area" rows="14" aria-label="Standup text">'+esc(standupText())+'</textarea><span class="hint">Written from what moved on the board. Edit it if you like, then paste it into chat.</span></div>'+
+    '<div class="df"><button class="btn primary" data-act="copy-standup">'+ic('copy')+'Copy</button><span class="grow"></span><button class="btn" data-act="close">Close</button></div>';
+}
+function settingsHTML(){
+  if(T.on)return teamSettingsHTML();
+  const s=S.settings;
+  const sel=(v,list)=>list.map(x=>'<option value="'+x[0]+'"'+(String(x[0])===String(v)?' selected':'')+'>'+x[1]+'</option>').join('');
+  return head('Settings')+
+    '<div class="db">'+
+      '<div class="grid2">'+
+        '<div class="field"><label for="s-name">Board name</label><input id="s-name" value="'+esc(S.name)+'" maxlength="60"></div>'+
+        '<div class="field"><label for="s-key">Card prefix</label><input id="s-key" class="mono" value="'+esc(S.key)+'" maxlength="5" autocomplete="off"><span class="hint">Used in branch names and commits.</span></div>'+
+        '<div class="field"><label for="s-len">Cycle length</label><select id="s-len">'+sel(s.cycleDays,[[7,'1 week'],[14,'2 weeks'],[21,'3 weeks'],[28,'4 weeks']])+'</select></div>'+
+        '<div class="field"><label for="s-wip">Doing limit</label><select id="s-wip">'+sel(s.wip,[1,2,3,4,5,6,8,10].map(n=>[n,n+' card'+(n>1?'s':'')]))+'</select></div>'+
+        '<div class="field"><label for="s-stale">Flag as quiet after</label><select id="s-stale">'+sel(s.staleDays,[2,3,4,5,7].map(n=>[n,n+' days']))+'</select></div>'+
+      '</div>'+
+      '<div class="row"><button class="btn" data-act="roll-now">Start the next cycle now</button><button class="btn" data-act="load-sample">Load the example board</button><button class="btn danger" data-act="clear-all">Clear all cards</button></div>'+
+      '<div class="field"><label for="s-export">Back up or move your data</label><textarea id="s-export" class="mono-area" rows="3" readonly></textarea>'+
+        '<div class="row"><button class="btn small" data-act="copy-export">'+ic('copy')+'Copy backup</button></div></div>'+
+      '<div class="field"><label for="s-import">Restore from a backup</label><textarea id="s-import" class="mono-area" rows="2" placeholder="Paste a backup here"></textarea>'+
+        '<div class="row"><button class="btn small" data-act="import">Restore</button><span class="hint" id="importMsg"></span></div></div>'+
+      '<span class="hint">Data is saved in this browser only.</span>'+
+    '</div>';
+}
+function helpHTML(){
+  return head('How Nudge stays out of your way')+
+    '<div class="db help">'+
+      '<div><h3>Why it works this way</h3><ul>'+
+        '<li><b>Updating should cost less than the work.</b> Only a title is required. One click on a card\'s circle moves it along.</li>'+
+        '<li><b>One board, five statuses.</b> Backlog, To do, Doing, Review, Done. No custom workflows.</li>'+
+        '<li><b>The board tidies itself.</b> Cards sort by deadline and priority. Unfinished cards roll into the next cycle and finished ones are archived.</li>'+
+        '<li><b>Quiet cards get flagged.</b> Anything in Doing or Review with no activity turns up in Check in, with one-click answers.</li>'+
+        '<li><b>Git can do the moving.</b> Paste your log and cards advance. Copy a card\'s branch name so commits find it.</li>'+
+        '<li><b>Your standup writes itself</b> from what moved.</li>'+
+        '<li><b>Progress is shown per cycle, never per person.</b></li></ul></div>'+
+      '<div><h3>Shortcuts</h3><div class="keys">'+
+        '<span><kbd>n</kbd></span><span>New task</span><span><kbd>/</kbd></span><span>Filter cards</span>'+
+        '<span><kbd>c</kbd></span><span>Check in</span><span><kbd>g</kbd></span><span>Git sync</span><span><kbd>s</kbd></span><span>Standup</span>'+
+        '<span><kbd>v</kbd></span><span>Switch Board and Focus</span><span><kbd>z</kbd></span><span>Undo</span>'+
+        '<span><kbd>&larr;</kbd> <kbd>&rarr;</kbd></span><span>On a selected card: move it back or forward</span>'+
+        '<span><kbd>d</kbd> <kbd>Enter</kbd></span><span>On a selected card: mark done, or open it</span>'+
+        '<span><kbd>shift</kbd>+click circle</span><span>Move a card back one step</span></div></div>'+
+    '</div>';
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+  const t=e.target;
+  const tabBtn=t.closest('.tab');if(tabBtn){setView(tabBtn.dataset.view);return;}
+  const who=t.closest('[data-who]');if(who){ui.who=ui.who===who.dataset.who?'':who.dataset.who;renderAll();return;}
+  const tag=t.closest('[data-tag]');if(tag){ui.tag=ui.tag===tag.dataset.tag?'':tag.dataset.tag;renderAll();return;}
+  const act=t.closest('[data-act]');
+  const cardEl=t.closest('.card'),rowEl=t.closest('.frow,.drow');
+  const inDlg=dlg.contains(t);
+  if(act){
+    const a=act.dataset.act,elc=cardEl||rowEl,c=elc?cardById(elc.dataset.id):null;
+    switch(a){
+      case 'add':addFromInput();return;
+      case 'advance':if(c)advance(c,e.shiftKey?-1:1);return;
+      case 'advance-f':if(c)advance(c,1);return;
+      case 'still':if(c)mutate(()=>{c.touched=NOW();},keyOf(c)+' still on: nice');return;
+      case 'unblock':if(c)mutate(()=>{c.blocked=false;c.touched=NOW();},keyOf(c)+' unblocked');return;
+      case 'add-to':ui.addStatus=act.dataset.status;renderPreview();$('#add').focus();window.scrollTo({top:0,behavior:'smooth'});return;
+      case 'reset-target':ui.addStatus='todo';renderPreview();$('#add').focus();return;
+      case 'open-checkin':openCheckin();return;
+      case 'open-git':openDialog('git',gitHTML());return;
+      case 'open-standup':openDialog('standup',standupHTML());return;
+      case 'open-settings':{openDialog('settings',settingsHTML());const x=$('#s-export');if(x)x.value=T.on?exportText():JSON.stringify(S);return;}
+      case 'open-help':openDialog('help',helpHTML());return;
+      case 'open-team':openTeam();return;
+      case 'open-notes':openNotes();return;
+      case 'undo':undo();return;
+      case 'clear-all':
+        mutate(()=>{S.cards=[];S.log=[];S.history=[];S.nextNum=1;S.sample=false;S.name=S.name==='Checkout revamp'?'My board':S.name;S.key=S.key==='CHK'?'TSK':S.key;},'Board cleared');
+        if(dlg.open)dlg.close();return;
+    }
+    if(inDlg){dialogClick(a,act,e);return;}
+  }
+  if(inDlg){dialogClick(null,t,e);return;}
+  if(cardEl){openCard(cardEl.dataset.id);return;}
+  if(rowEl){openCard(rowEl.dataset.id);return;}
+});
+
+function dialogClick(a,act,e){
+  const kind=dlg.dataset.kind;
+  if(a==='close'){dlg.close();return;}
+  if(T.on&&teamDialogClick(kind,a,act,e))return;
+  if(kind==='card'){
+    const c=cardById(dlg.dataset.id);if(!c)return;
+    if(a==='copy-branch'){copyText(branchName(c)).then(ok=>{const l=act.querySelector('.mono');if(l){const o=l.textContent;l.textContent=ok?'Copied':'Select and copy';setTimeout(()=>{l.textContent=o;},1400);}});return;}
+    if(a==='delete'){mutate(()=>{S.cards=S.cards.filter(x=>x!==c);},keyOf(c)+' deleted');dlg.close();return;}
+    const dueBtn=e.target.closest('[data-due]');
+    if(dueBtn){
+      const v=dueBtn.dataset.due;c.due=v===''?'':addDays(today(),+v);c.touched=NOW();
+      $('#f-due').value=c.due;$('#prioHint').textContent=prioHint(c);commit();return;
+    }
+    const rm=e.target.closest('[data-rmcheck]');
+    if(rm){c.checks.splice(+rm.dataset.rmcheck,1);c.touched=NOW();$('#checks').innerHTML=checksHTML(c);commit();return;}
+    return;
+  }
+  if(kind==='checkin'&&a==='ci'){
+    const c=cardById(act.dataset.id);if(!c)return;
+    const scroll=dlg.scrollTop;
+    mutate(()=>ciApply(act.dataset.do,c),null,true);
+    dlg.innerHTML=checkinHTML();dlg.scrollTop=scroll;return;
+  }
+  if(kind==='git'){
+    if(a==='git-example'){$('#git-in').value=GIT_EXAMPLE;return;}
+    if(a==='git-read'){$('#git-out').innerHTML=gitResultHTML(parseGit($('#git-in').value));return;}
+    if(a==='git-apply'){
+      const picks=$$('[data-gitpick]',dlg).filter(x=>x.checked).map(x=>+x.dataset.gitpick);
+      const res=parseGit($('#git-in').value).moves.filter(m=>picks.indexOf(m.c.num)>=0);
+      if(!res.length)return;
+      mutate(()=>res.forEach(m=>setStatus(m.c,m.to)),res.length+' card'+(res.length>1?'s':'')+' moved from git activity');
+      dlg.close();return;
+    }
+  }
+  if(kind==='standup'&&a==='copy-standup'){
+    copyText($('#standup').value).then(ok=>{act.lastChild.textContent=ok?'Copied':'Select and copy';setTimeout(()=>{act.lastChild.textContent='Copy';},1400);});
+    if(!navigator.clipboard)$('#standup').select();return;
+  }
+  if(kind==='settings'){
+    if(a==='roll-now'){
+      mutate(()=>{rollCycle(today(),1);},'Cycle '+(S.cycle.n+1)+' started. Unfinished cards rolled over.');
+      dlg.close();return;
+    }
+    if(a==='load-sample'){mutate(()=>{S=sampleState();},'Example board loaded');dlg.close();return;}
+    if(a==='copy-export'){copyText($('#s-export').value).then(ok=>{act.lastChild.textContent=ok?'Copied':'Select and copy';setTimeout(()=>{act.lastChild.textContent='Copy backup';},1400);});$('#s-export').select();return;}
+    if(a==='import'){
+      let o=null;try{o=normalize(JSON.parse($('#s-import').value));}catch(err){}
+      if(!o){$('#importMsg').textContent='That does not look like a Nudge backup.';return;}
+      mutate(()=>{S=o;},'Backup restored');dlg.close();return;
+    }
+  }
+}
+dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
+dlg.addEventListener('close',()=>{dlg.dataset.kind='';renderAll();});
+
+/* dialog form fields */
+dlg.addEventListener('input',e=>{
+  const kind=dlg.dataset.kind,id=e.target.id;
+  if(kind==='card'){
+    const c=cardById(dlg.dataset.id);if(!c)return;
+    if(id==='f-title'){if(!e.target.value.trim())return;c.title=e.target.value.slice(0,200);}
+    else if(id==='f-notes')c.notes=e.target.value;
+    else if(id==='f-who'){if(T.on)return;c.assignee=cleanName(e.target.value);}
+    else return;
+    c.touched=NOW();commit();
+  }
+});
+dlg.addEventListener('change',e=>{
+  const kind=dlg.dataset.kind,id=e.target.id,el=e.target;
+  if(T.on&&teamDialogChange(e))return;
+  if(kind==='card'){
+    const c=cardById(dlg.dataset.id);if(!c)return;
+    if(T.on&&id==='f-who'){c.assigneeId=el.value||null;c.assignee=teamName(c.assigneeId);c.touched=NOW();commit();return;}
+    if(T.on&&id==='f-rev'){c.reviewerId=el.value||null;c.touched=NOW();commit();return;}
+    if(id==='f-title'){if(!el.value.trim()){el.value=c.title;return;}c.title=el.value.trim().slice(0,200);}
+    else if(id==='f-status'){setStatus(c,el.value);const f=$('#f-blocked');if(f)f.checked=c.blocked;$('#cardAge').textContent='Created '+ago(c.created)+', '+SNAME[c.status]+' since today';}
+    else if(id==='f-prio'){c.prio=el.value;c.touched=NOW();}
+    else if(id==='f-due'){c.due=el.value;c.touched=NOW();$('#prioHint').textContent=prioHint(c);}
+    else if(id==='f-tags'){c.tags=Array.from(new Set(el.value.toLowerCase().split(/[\s,#]+/).filter(Boolean).map(t=>t.slice(0,30)))).slice(0,20);el.value=c.tags.join(' ');c.touched=NOW();}
+    else if(id==='f-blocked'){c.blocked=el.checked;c.touched=NOW();}
+    else if(el.dataset.check!==undefined){
+      const k=c.checks[+el.dataset.check];k.done=el.checked;c.touched=NOW();
+      if(k.done&&(c.status==='todo'||c.status==='backlog')){setStatus(c,'doing');$('#f-status').value='doing';}
+      $('#checks').innerHTML=checksHTML(c);
+    }
+    else return;
+    commit();
+  }else if(kind==='settings'){
+    const s=S.settings;
+    if(id==='s-name')S.name=el.value.trim()||'My board';
+    else if(id==='s-key'){const v=el.value.toUpperCase().replace(/[^A-Z0-9]/g,'');S.key=v||'TSK';el.value=S.key;}
+    else if(id==='s-len')s.cycleDays=+el.value;
+    else if(id==='s-wip')s.wip=+el.value;
+    else if(id==='s-stale')s.staleDays=+el.value;
+    else return;
+    commit();{const x=$('#s-export');if(x)x.value=T.on?exportText():JSON.stringify(S);}
+  }
+});
+dlg.addEventListener('keydown',e=>{
+  if(dlg.dataset.kind==='team'&&e.key==='Enter'&&(e.target.id==='t-name'||e.target.id==='t-email')){
+    e.preventDefault();const b=$('#dlg [data-act="team-add"]');if(b)b.click();return;
+  }
+  if(dlg.dataset.kind==='card'&&e.target.id==='f-check'&&e.key==='Enter'){
+    e.preventDefault();
+    const c=cardById(dlg.dataset.id),v=e.target.value.trim();
+    if(!c||!v)return;
+    if(c.checks.length>=50){toast('A card can have up to 50 steps.');return;}
+    c.checks.push({t:v.slice(0,200),done:false});c.touched=NOW();e.target.value='';
+    $('#checks').innerHTML=checksHTML(c);commit();
+  }
+});
+
+/* board: drag and drop, keyboard */
+const boardEl=$('#board');
+boardEl.addEventListener('dragstart',e=>{
+  const c=e.target.closest&&e.target.closest('.card');if(!c)return;
+  e.dataTransfer.setData('text/plain',c.dataset.id);e.dataTransfer.effectAllowed='move';
+  requestAnimationFrame(()=>c.classList.add('dragging'));
+});
+boardEl.addEventListener('dragend',()=>{$$('.dragging',boardEl).forEach(x=>x.classList.remove('dragging'));$$('.drop',boardEl).forEach(x=>x.classList.remove('drop'));});
+boardEl.addEventListener('dragover',e=>{const col=e.target.closest('.col');if(!col)return;e.preventDefault();$$('.drop',boardEl).forEach(x=>{if(x!==col)x.classList.remove('drop');});col.classList.add('drop');});
+boardEl.addEventListener('dragleave',e=>{const col=e.target.closest('.col');if(col&&!col.contains(e.relatedTarget))col.classList.remove('drop');});
+boardEl.addEventListener('drop',e=>{
+  const col=e.target.closest('.col');if(!col)return;
+  e.preventDefault();col.classList.remove('drop');
+  const c=cardById(e.dataTransfer.getData('text/plain'));
+  if(c&&c.status!==col.dataset.status)mutate(()=>setStatus(c,col.dataset.status),keyOf(c)+' moved to '+SNAME[col.dataset.status]);
+});
+boardEl.addEventListener('keydown',e=>{
+  const el=e.target;
+  if(!el.classList||!el.classList.contains('card'))return;
+  const c=cardById(el.dataset.id);if(!c)return;
+  if(e.key==='ArrowRight'){e.preventDefault();advance(c,1);}
+  else if(e.key==='ArrowLeft'){e.preventDefault();advance(c,-1);}
+  else if(e.key==='ArrowDown'&&el.nextElementSibling&&el.nextElementSibling.classList.contains('card')){e.preventDefault();el.nextElementSibling.focus();}
+  else if(e.key==='ArrowUp'&&el.previousElementSibling&&el.previousElementSibling.classList.contains('card')){e.preventDefault();el.previousElementSibling.focus();}
+  else if(e.key==='Enter'||e.key==='e'){e.preventDefault();openCard(c.id);}
+  else if(e.key==='d'&&c.status!=='done'){e.preventDefault();mutate(()=>setStatus(c,'done'),keyOf(c)+' marked done');}
+});
+
+/* quick add + filter inputs */
+$('#add').addEventListener('input',renderPreview);
+$('#add').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();addFromInput();}
+  else if(e.key==='Escape'){e.target.value='';ui.addStatus='todo';renderPreview();e.target.blur();}
+});
+$('#q').addEventListener('input',e=>{ui.q=e.target.value.trim();if(ui.view==='board')renderBoard();else renderFocus();});
+
+/* global shortcuts */
+document.addEventListener('keydown',e=>{
+  if(e.metaKey||e.ctrlKey||e.altKey){
+    if((e.key==='z'||e.key==='Z')&&!e.shiftKey&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)&&undoSnap){e.preventDefault();undo();}
+    return;
+  }
+  if(dlg.open||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.target.isContentEditable)return;
+  const k=e.key;
+  if(k==='n'){e.preventDefault();$('#add').focus();}
+  else if(k==='/'){e.preventDefault();$('#q').focus();}
+  else if(k==='c')openCheckin();
+  else if(k==='g')openDialog('git',gitHTML());
+  else if(k==='s')openDialog('standup',standupHTML());
+  else if(k==='v')setView(ui.view==='board'?'focus':'board');
+  else if(k==='z'&&undoSnap)undo();
+  else if(k==='?')openDialog('help',helpHTML());
+});
+
+/* ---------- team mode: a shared board on Supabase ---------- */
+const CFG=window.NUDGE_CONFIG||{};
+const TEAM_CONFIGURED=!!(window.NUDGE_BACKEND||(CFG.supabaseUrl&&CFG.supabaseKey));
+let B=null;
+const SYNC={last:new Map(),busy:false,again:false,timer:null,boardSig:''};
+
+function isPM(){return !!(T.me&&T.me.role==='pm');}
+function teamName(id){const p=T.team.find(x=>x.id===id);return p?p.name:'';}
+function newId(){
+  if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,ch=>{const r=Math.random()*16|0;return (ch==='x'?r:(r&3|8)).toString(16);});
+}
+// "@sam" -> the one active teammate it clearly means, or null
+function resolveMention(tok){
+  const t=String(tok||'').toLowerCase(),act=T.team.filter(p=>p.active);
+  let m=act.filter(p=>p.name.toLowerCase()===t);
+  if(m.length!==1)m=act.filter(p=>p.name.toLowerCase().split(' ')[0]===t);
+  if(m.length!==1)m=act.filter(p=>p.name.toLowerCase().startsWith(t));
+  return m.length===1?m[0]:null;
+}
+function timeAgo(ts){
+  const m=Math.max(0,Math.round((NOW()-ts)/60000));
+  if(m<1)return 'just now';if(m<60)return m+'m ago';
+  const h=Math.round(m/60);if(h<24)return h+'h ago';
+  return Math.round(h/24)+'d ago';
+}
+
+/* ----- the Supabase adapter. Everything the app needs from the server is here. ----- */
+const SUPABASE_JS={
+  src:'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js',
+  integrity:'sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok'
+};
+function loadScript(src,integrity){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');s.src=src;
+    if(integrity){s.integrity=integrity;s.crossOrigin='anonymous';}
+    s.onload=res;s.onerror=()=>rej(new Error('Could not load the sign-in library. Check your connection and reload.'));
+    document.head.appendChild(s);
+  });
+}
+function makeSupabaseBackend(cfg){
+  let sb=null;
+  const ok=r=>{if(r.error)throw r.error;return r.data;};
+  const PEOPLE_COLS='id,name,email,role,timezone,notify_mode,pm_instant,active,muted_until';
+  return {
+    async init(){
+      await loadScript(SUPABASE_JS.src,SUPABASE_JS.integrity);
+      sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseKey,{auth:{flowType:'pkce',detectSessionInUrl:true,persistSession:true,autoRefreshToken:true}});
+    },
+    async session(){const {data}=await sb.auth.getSession();return data.session?{email:data.session.user.email}:null;},
+    onAuth(cb){sb.auth.onAuthStateChange((ev,s)=>cb(ev,s?{email:s.user.email}:null));},
+    async signInGoogle(){ok(await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}}));},
+    async sendCode(email){ok(await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true}}));},
+    async verifyCode(email,token){ok(await sb.auth.verifyOtp({email,token,type:'email'}));},
+    async signOut(){await sb.auth.signOut();},
+    async whoami(){return ok(await sb.rpc('whoami'));},
+    async rollIfDue(){return ok(await sb.rpc('roll_cycle_if_due'));},
+    async rollNow(){return ok(await sb.rpc('roll_cycle_now'));},
+    async loadAll(pm){
+      const since=new Date(Date.now()-14*864e5).toISOString();
+      const [board,team,cards,events,notes,history,people]=await Promise.all([
+        sb.from('board').select('*').eq('id',1).single(),
+        sb.from('team').select('id,name,role,timezone,active').order('name'),
+        sb.from('cards').select('*').is('archived_at',null).order('num'),
+        sb.from('card_events').select('card_key,title,from_status,to_status,actor_id,at').gte('at',since).order('at'),
+        sb.from('notifications').select('id,card_id,kind,message,created_at,read_at').order('created_at',{ascending:false}).limit(40),
+        sb.from('cycle_history').select('*').order('n'),
+        pm?sb.from('people').select(PEOPLE_COLS).order('name'):Promise.resolve({data:null,error:null})
+      ]);
+      return {board:ok(board),team:ok(team),cards:ok(cards),events:ok(events),notes:ok(notes),history:ok(history),people:ok(people)};
+    },
+    async loadPeople(pm){
+      const [team,people]=await Promise.all([
+        sb.from('team').select('id,name,role,timezone,active').order('name'),
+        pm?sb.from('people').select(PEOPLE_COLS).order('name'):Promise.resolve({data:null,error:null})
+      ]);
+      return {team:ok(team),people:ok(people)};
+    },
+    async cardsSince(iso){return ok(await sb.from('cards').select('*').gte('updated_at',iso));},
+    async notesSince(iso){return ok(await sb.from('notifications').select('id,card_id,kind,message,created_at,read_at').gte('created_at',iso));},
+    async insertCard(row){return ok(await sb.from('cards').insert(row).select().single());},
+    async updateCard(id,patch,version){const d=ok(await sb.from('cards').update(patch).eq('id',id).eq('version',version).select());return d.length?d[0]:null;},
+    async deleteCard(id){return ok(await sb.from('cards').delete().eq('id',id).select('id')).length>0;},
+    async updateBoard(patch){ok(await sb.from('board').update(patch).eq('id',1));},
+    async insertPerson(p){ok(await sb.from('people').insert(p));},
+    async updatePerson(id,patch){const d=ok(await sb.from('people').update(patch).eq('id',id).select('id'));if(!d.length)throw new Error('That change was not allowed.');},
+    async deletePerson(id){ok(await sb.from('people').delete().eq('id',id));},
+    async getSettings(){return ok(await sb.from('notify_settings').select('*').eq('id',1).single());},
+    async updateSettings(patch){ok(await sb.from('notify_settings').update(patch).eq('id',1));},
+    async emailStatus(){return ok(await sb.rpc('email_status'));},
+    async sendTestEmail(){return ok(await sb.rpc('send_test_email'));},
+    async updateMyPrefs(mode,tz,pause){return ok(await sb.rpc('update_my_prefs',{p_notify_mode:mode,p_timezone:tz,p_pause:pause}));},
+    async markNotesRead(){ok(await sb.from('notifications').update({read_at:new Date().toISOString()}).is('read_at',null));},
+    async mute(token,mode){return ok(await sb.rpc('mute_by_token',{p_token:token,p_mode:mode}));},
+    subscribe(h){
+      const ch=sb.channel('nudge-board')
+        .on('postgres_changes',{event:'*',schema:'public',table:'cards'},p=>h.card(p))
+        .on('postgres_changes',{event:'*',schema:'public',table:'board'},()=>h.board())
+        .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications'},p=>h.note(p.new))
+        .subscribe(st=>h.status(st));
+      return ()=>sb.removeChannel(ch);
+    }
+  };
+}
+
+/* ----- card <-> row ----- */
+function rowFromCard(c){
+  return {title:c.title,notes:c.notes||'',status:c.status,prio:c.prio,assignee_id:c.assigneeId||null,reviewer_id:c.reviewerId||null,
+    due:c.due||null,tags:c.tags||[],checks:(c.checks||[]).map(k=>({t:k.t,done:!!k.done})),blocked:!!c.blocked};
+}
+function cardFromRow(r){
+  const ts=x=>x?Date.parse(x):null;
+  return {id:r.id,num:r.num,title:r.title,notes:r.notes||'',status:r.status,prio:r.prio,
+    assignee:teamName(r.assignee_id),assigneeId:r.assignee_id||null,reviewerId:r.reviewer_id||null,
+    due:r.due||'',tags:Array.isArray(r.tags)?r.tags:[],
+    checks:(Array.isArray(r.checks)?r.checks:[]).filter(k=>k&&typeof k==='object').map(k=>({t:String(k.t==null?'':k.t),done:!!k.done})),blocked:!!r.blocked,
+    rolled:r.rolled||0,created:ts(r.created_at),touched:ts(r.touched_at),statusSince:ts(r.status_since),doneAt:ts(r.done_at),version:r.version};
+}
+const cardSig=c=>JSON.stringify(rowFromCard(c))+'|'+c.touched;
+const boardSig=()=>JSON.stringify([S.name,S.settings.cycleDays,S.settings.wip,S.settings.staleDays,S.reviewerId||null,S.timezone||'UTC']);
+const boardPatch=()=>({name:S.name,cycle_days:S.settings.cycleDays,wip_limit:S.settings.wip,stale_days:S.settings.staleDays,
+  default_reviewer_id:S.reviewerId||null,timezone:S.timezone||'UTC',updated_at:new Date().toISOString()});
+
+const renderSoon=(function(){let t;return function(){clearTimeout(t);t=setTimeout(renderAll,120);};})();
+const teamRefreshSoon=(function(){let t;return function(){clearTimeout(t);t=setTimeout(()=>{refreshPeople().catch(()=>{});},800);};})();
+
+function applyLoaded(d){
+  T.team=d.team;T.people=d.people;T.notes=d.notes;
+  const b=d.board;
+  S={v:1,name:b.name,key:b.card_prefix,nextNum:0,timezone:b.timezone,reviewerId:b.default_reviewer_id||null,
+    settings:{cycleDays:b.cycle_days,wip:b.wip_limit,staleDays:b.stale_days},
+    cycle:{n:b.cycle_n,start:b.cycle_start},
+    history:d.history.map(h=>({n:h.n,start:h.start_date,end:h.end_date,done:h.done,total:h.total})),
+    cards:d.cards.map(cardFromRow),
+    log:d.events.filter(e=>e.actor_id===T.me.id).map(e=>({t:Date.parse(e.at),key:e.card_key,title:e.title,from:e.from_status||'',to:e.to_status})),
+    sample:false};
+  SYNC.last=new Map(S.cards.map(c=>[c.id,{sig:cardSig(c),version:c.version}]));
+  SYNC.boardSig=boardSig();
+  T.lastSeen=d.cards.reduce((m,r)=>(r.updated_at&&r.updated_at>m?r.updated_at:m),'')||new Date(Date.now()-60000).toISOString();
+  T.noteSeen=d.notes.reduce((m,n)=>(n.created_at>m?n.created_at:m),'')||new Date(Date.now()-60000).toISOString();
+}
+async function reloadAll(opts){
+  const discard=!!(opts&&opts.discard);
+  if(!discard){clearTimeout(SYNC.timer);await pushChanges();}   // never throw away edits that are not saved yet
+  const d=await B.loadAll(isPM());
+  if(!discard&&dirty()){syncSoon();return;}                      // edits arrived while loading: keep them
+  applyLoaded(d);T.fullAt=NOW();renderAll();
+}
+
+/* ----- saving: compare with what the server last told us and send only the differences ----- */
+function syncSoon(){clearTimeout(SYNC.timer);SYNC.timer=setTimeout(pushChanges,250);}
+// Anything on screen that the server has not been told about yet?
+function dirty(){
+  if(S.cards.some(c=>{const k=SYNC.last.get(c.id);return !k||k.sig!==cardSig(c);}))return true;
+  const present=new Set(S.cards.map(c=>c.id));
+  for(const id of SYNC.last.keys())if(!present.has(id))return true;
+  return isPM()&&boardSig()!==SYNC.boardSig;
+}
+function afterSave(c,r,sent){
+  if(cardSig(c)===sent){                 // untouched while saving: take the server's copy
+    Object.assign(c,cardFromRow(r));
+    SYNC.last.set(c.id,{sig:cardSig(c),version:r.version});
+  }else{                                 // edited again while saving: keep those edits and send them next round
+    c.num=r.num;c.rolled=r.rolled||0;c.version=r.version;c.created=Date.parse(r.created_at);
+    c.statusSince=Date.parse(r.status_since);c.doneAt=r.done_at?Date.parse(r.done_at):null;
+    SYNC.last.set(c.id,{sig:sent,version:r.version});
+    SYNC.again=true;
+  }
+  renderSoon();
+}
+function pushChanges(){
+  if(!T.ready||!B)return Promise.resolve();
+  if(SYNC.run){SYNC.again=true;return SYNC.run;}
+  SYNC.run=(async()=>{
+    try{
+      do{
+        SYNC.again=false;
+        const present=new Set(S.cards.map(c=>c.id));
+        for(const id of Array.from(SYNC.last.keys())){
+          if(present.has(id))continue;
+          const removed=await B.deleteCard(id);
+          SYNC.last.delete(id);
+          if(!removed){toast('Only the project manager or the person who added a card can delete it.');await reloadAll({discard:true});return;}
+        }
+        for(const c of S.cards.slice()){
+          const known=SYNC.last.get(c.id);
+          if(!known){
+            const sent=cardSig(c);
+            const r=await B.insertCard(Object.assign({id:c.id},rowFromCard(c)));
+            afterSave(c,r,sent);
+          }else if(known.sig!==cardSig(c)){
+            const sent=cardSig(c);
+            const r=await B.updateCard(c.id,rowFromCard(c),known.version);
+            if(!r){toast('Someone just changed that card, so I refreshed the board.');await reloadAll({discard:true});return;}
+            afterSave(c,r,sent);
+          }
+        }
+        if(isPM()&&boardSig()!==SYNC.boardSig){await B.updateBoard(boardPatch());SYNC.boardSig=boardSig();}
+      }while(SYNC.again);
+    }catch(e){syncError(e);}
+  })().then(()=>{SYNC.run=null;});
+  return SYNC.run;
+}
+function syncError(e){
+  console.error(e);
+  const m=(e&&e.message)||'';
+  let msg='That change did not save, so I refreshed the board.';
+  if(/project manager|assign|reviewer/i.test(m))msg=m;
+  else if((e&&e.code==='23514')||/check constraint|violates/i.test(m))msg='That change was not allowed. A title, note, tag or step was empty or too long. I refreshed the board.';
+  toast(msg);
+  reloadAll({discard:true}).catch(()=>{});
+}
+
+/* ----- changes made by other people ----- */
+function onRemoteCard(p){
+  if(p.eventType==='DELETE'){
+    const id=p.old&&p.old.id;
+    if(id){S.cards=S.cards.filter(c=>c.id!==id);SYNC.last.delete(id);renderSoon();}
+    return;
+  }
+  const r=p.new;if(!r)return;
+  const cur=S.cards.find(c=>c.id===r.id);
+  if(r.archived_at){
+    if(cur){S.cards=S.cards.filter(c=>c.id!==r.id);SYNC.last.delete(r.id);renderSoon();}
+    return;
+  }
+  const known=SYNC.last.get(r.id);
+  if(cur&&known){
+    if(r.version<=known.version)return;        // our own echo, or old news
+    if(cardSig(cur)!==known.sig)return;         // we have an unsaved edit; saving will sort it out
+  }
+  const fresh=cardFromRow(r);
+  if((r.assignee_id&&!teamName(r.assignee_id))||(r.reviewer_id&&!teamName(r.reviewer_id)))teamRefreshSoon();
+  if(r.updated_at&&(!T.lastSeen||r.updated_at>T.lastSeen))T.lastSeen=r.updated_at;
+  if(cur)Object.assign(cur,fresh);else S.cards.push(fresh);
+  SYNC.last.set(r.id,{sig:cardSig(cur||fresh),version:r.version});
+  renderSoon();
+}
+function addNote(n){
+  if(T.notes.some(x=>x.id===n.id))return;
+  T.notes.unshift(n);T.notes=T.notes.slice(0,40);
+  renderTools();setTitle();
+  if(n.kind!=='update')toast(n.message);
+}
+function startLive(){
+  try{
+    T.unsub=B.subscribe({card:onRemoteCard,note:addNote,board:()=>{reloadAll().catch(()=>{});},status:st=>{
+      const was=T.rt;T.rt=st==='SUBSCRIBED';
+      if(T.rt&&!was&&T.rtEver)refreshTeam();     // reconnected: catch up on anything missed
+      if(T.rt)T.rtEver=true;
+    }});
+  }catch(e){T.rt=false;}
+  clearInterval(T.pollTimer);clearInterval(T.teamTimer);
+  T.pollTimer=setInterval(()=>{pollOnce().catch(()=>{});},30000);
+  T.teamTimer=setInterval(()=>{if(!document.hidden&&T.ready)refreshPeople().catch(()=>{});},5*60000);
+}
+async function pollOnce(){
+  if(!T.ready||document.hidden||SYNC.run)return;
+  const now=NOW();
+  if(now-T.fullAt>(T.rt?15:5)*60000){await reloadAll();return;}   // also how removed cards are noticed
+  if(T.rt)return;                                                 // live updates are arriving on their own
+  const rows=await B.cardsSince(T.lastSeen);
+  rows.forEach(r=>onRemoteCard({eventType:'UPDATE',new:r}));
+  const ns=await B.notesSince(T.noteSeen);
+  ns.forEach(n=>{if(n.created_at>T.noteSeen)T.noteSeen=n.created_at;addNote(n);});
+}
+async function refreshTeam(){
+  if(!T.ready)return;
+  try{await B.rollIfDue();await reloadAll();}catch(e){}
+}
+async function refreshPeople(){
+  const d=await B.loadPeople(isPM());
+  T.team=d.team;T.people=d.people;
+  S.cards.forEach(c=>{if(c.assigneeId)c.assignee=teamName(c.assigneeId);});
+  renderAll();
+}
+
+/* ----- the sign-in gate ----- */
+function showGate(html){
+  const g=$('#gate');g.innerHTML=html;g.hidden=false;
+  const w=$('.wrap');if(w)w.inert=true;
+  const f=g.querySelector('input,button');if(f)f.focus();
+}
+function hideGate(){
+  const g=$('#gate');g.hidden=true;g.innerHTML='';
+  const w=$('.wrap');if(w)w.inert=false;
+}
+const gateShell=inner=>'<div class="gate-card"><span class="kicker">Nudge Board</span>'+inner+'</div>';
+function friendlyAuthError(err){
+  const m=(err&&err.message)||String(err);
+  if(/expired|invalid|otp/i.test(m))return 'That code did not work. Check the digits, or ask for a new one.';
+  if(/rate|seconds|too many/i.test(m))return 'Please wait a minute before asking for another code.';
+  if(/smtp|sending|authorized|confirmation/i.test(m))return 'The server could not send the email yet. Ask your project manager to check the email setup.';
+  return m;
+}
+function showSignIn(msg,email){
+  const g=CFG.google===true;
+  showGate(gateShell('<h1>Sign in</h1><p class="muted">Use the email address your project manager added for you.</p>'+
+    (g?'<button class="btn primary big" data-gate="google">Continue with Google</button><div class="or">or</div>':'')+
+    '<div class="field"><label for="g-email">Email</label><input id="g-email" type="email" autocomplete="email" inputmode="email" placeholder="you@company.com" value="'+esc(email||'')+'"></div>'+
+    '<button class="btn '+(g?'':'primary ')+'big" data-gate="send" id="g-send">Email me a code</button>'+
+    '<div id="g-codebox" hidden><div class="field"><label for="g-code">Code from your email</label><input id="g-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456"></div>'+
+    '<button class="btn primary big" data-gate="verify">Sign in</button></div>'+
+    '<p id="g-msg" class="hint" role="status">'+esc(msg||'')+'</p>'));
+}
+$('#gate').addEventListener('click',async e=>{
+  const b=e.target.closest('[data-gate]');if(!b)return;
+  const a=b.dataset.gate,msg=$('#g-msg');
+  const say=(t,bad)=>{if(msg){msg.textContent=t;msg.className='hint'+(bad?' badline':'');}};
+  try{
+    if(a==='google'){await B.signInGoogle();}
+    else if(a==='send'){
+      const email=$('#g-email').value.trim();
+      if(!/^\S+@\S+\.\S+$/.test(email)){say('Enter your email address.',true);return;}
+      b.disabled=true;say('Sending...');
+      await B.sendCode(email);
+      T.pendingEmail=email;$('#g-codebox').hidden=false;$('#g-code').focus();
+      say('Check your inbox for the code. It can take a minute.');
+      let n=60;const tm=setInterval(()=>{n--;b.textContent=n>0?'Send again in '+n+'s':'Send a new code';if(n<=0){clearInterval(tm);b.disabled=false;}},1000);
+    }else if(a==='verify'){
+      const code=$('#g-code').value.replace(/\s+/g,'');
+      if(!code){say('Enter the code from your email.',true);return;}
+      say('Checking...');
+      await B.verifyCode(T.pendingEmail||$('#g-email').value.trim(),code);
+      await enterBoard();
+    }else if(a==='mute'){await applyMute(b.dataset.token,b.dataset.mode);}
+    else if(a==='signout'){await B.signOut();location.reload();}
+    else if(a==='reload'){location.reload();}
+  }catch(err){b.disabled=false;say(friendlyAuthError(err),true);}
+});
+$('#gate').addEventListener('keydown',e=>{
+  if(e.key!=='Enter')return;
+  const t=e.target;
+  if(t.id==='g-email')$('#g-send')&&$('#g-send').click();
+  else if(t.id==='g-code'){const v=$('#gate [data-gate="verify"]');v&&v.click();}
+});
+
+async function bootTeam(){
+  T.on=true;
+  showGate(gateShell('<h1>One moment</h1><p class="muted">Opening your board...</p>'));
+  try{
+    B=window.NUDGE_BACKEND||makeSupabaseBackend(CFG);
+    await B.init();
+  }catch(e){
+    showGate(gateShell('<h1>Cannot reach the server</h1><p class="muted">'+esc(e.message||String(e))+'</p><button class="btn primary big" data-gate="reload">Try again</button>'));
+    return;
+  }
+  if(/^#mute=/.test(location.hash)){await handleMuteLink();return;}
+  B.onAuth((ev)=>{
+    if(ev==='SIGNED_OUT'&&T.ready)location.reload();
+    else if(ev==='SIGNED_IN'&&!T.ready&&!T.booting)enterBoard();
+  });
+  const sess=await B.session();
+  if(!sess){showSignIn();return;}
+  await enterBoard();
+}
+async function enterBoard(){
+  if(T.booting||T.ready)return;
+  T.booting=true;
+  try{
+    const sess=await B.session();
+    const me=await B.whoami();
+    if(!me){
+      showGate(gateShell('<h1>Not on the team yet</h1><p class="muted">You are signed in as <b>'+esc(sess?sess.email:'')+'</b>, but that email is not on this board. Ask your project manager to add it, then reload.</p>'+
+        '<button class="btn primary big" data-gate="reload">Reload</button><button class="btn big" data-gate="signout">Sign out</button>'));
+      T.booting=false;return;
+    }
+    T.me=me;
+    if(me.timezone!==T.tz){try{T.me=(await B.updateMyPrefs(null,T.tz,null))||me;}catch(e){}}
+    try{await B.rollIfDue();}catch(e){}
+    applyLoaded(await B.loadAll(T.me.role==='pm'));
+    T.ready=true;T.fullAt=NOW();T.lastPoll=NOW();
+    hideGate();renderAll();startLive();openDeepLink();
+  }catch(e){
+    console.error(e);
+    showGate(gateShell('<h1>Something went wrong</h1><p class="muted">'+esc(e.message||String(e))+'</p><button class="btn primary big" data-gate="reload">Try again</button><button class="btn big" data-gate="signout">Sign out</button>'));
+  }
+  T.booting=false;
+}
+async function handleMuteLink(){
+  const m=location.hash.match(/^#mute=([0-9a-f-]{36})&mode=(pause|calm|off)/i);
+  history.replaceState(null,'',location.pathname+location.search);
+  if(!m){
+    showGate(gateShell('<h1>That link looks incomplete</h1><p class="muted">Open the board and use Settings to change your emails.</p><button class="btn primary big" data-gate="reload">Open the board</button>'));
+    return;
+  }
+  const mode=m[2].toLowerCase();
+  const label={pause:'Pause emails until Monday?',calm:'Switch to one digest each weekday morning?',off:'Turn emails off?'}[mode];
+  showGate(gateShell('<h1>'+label+'</h1><p class="muted">You will still see every update in the board.</p>'+
+    '<button class="btn primary big" data-gate="mute" data-token="'+esc(m[1])+'" data-mode="'+mode+'">Yes, do that</button>'+
+    '<button class="btn big" data-gate="reload">No, open the board</button><p id="g-msg" class="hint" role="status"></p>'));
+}
+async function applyMute(token,mode){
+  let html;
+  try{
+    const r=await B.mute(token,mode);
+    if(!r||!r.ok)html='<h1>That link no longer works</h1><p class="muted">Open the board and use Settings to change your emails.</p>';
+    else html='<h1>Done, '+esc(r.name)+'</h1><p class="muted">'+({pause:'No emails until Monday. You will still see updates in the board.',
+      calm:'You will get one short digest each weekday morning, and no other emails.',off:'Emails are off. You will still see updates in the board.'})[r.mode]+'</p>';
+  }catch(e){html='<h1>Could not save that</h1><p class="muted">'+esc(e.message||String(e))+'</p>';}
+  showGate(gateShell(html+'<button class="btn primary big" data-gate="reload">Open the board</button>'));
+}
+function openDeepLink(){
+  const m=location.hash.match(/^#card=(\d+)/);
+  if(!m)return;
+  const c=S.cards.find(x=>x.num===+m[1]);
+  history.replaceState(null,'',location.pathname+location.search);
+  if(c)openCard(c.id);else toast('That card is not on the board any more. It may have been archived.');
+}
+
+/* ----- notifications inbox ----- */
+function notesHTML(){
+  const rows=T.notes.map(n=>'<button type="button" class="note'+(n.read_at?'':' unread')+'" data-card="'+esc(n.card_id||'')+'"><span class="dot"></span><span class="msg">'+esc(n.message)+'</span><span class="when">'+timeAgo(Date.parse(n.created_at))+'</span></button>').join('');
+  return head('Notifications')+'<div class="db">'+(rows||'<p class="muted" style="margin:0">Nothing yet. When a task lands with you, it shows up here first.</p>')+'</div>'+
+    '<div class="df"><span class="hint">Emails only go out for things that need you, a few minutes after the change.</span><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
+}
+function openNotes(){
+  openDialog('notes',notesHTML());
+  if(T.notes.some(n=>!n.read_at)){
+    const now=new Date().toISOString();
+    T.notes.forEach(n=>{if(!n.read_at)n.read_at=now;});
+    renderTools();setTitle();
+    B.markNotesRead().catch(()=>{});
+  }
+}
+
+/* ----- settings for a signed-in person ----- */
+function exportText(){
+  return JSON.stringify({board:{name:S.name,prefix:S.key,cycle:S.cycle,settings:S.settings},
+    cards:S.cards.map(c=>Object.assign({num:c.num,owner:c.assignee,reviewer:teamName(c.reviewerId)},rowFromCard(c)))});
+}
+function teamSettingsHTML(){
+  const s=S.settings,pm=isPM(),dis=pm?'':' disabled';
+  const sel=(v,list)=>list.map(x=>'<option value="'+x[0]+'"'+(String(x[0])===String(v)?' selected':'')+'>'+x[1]+'</option>').join('');
+  const paused=T.me.muted_until&&new Date(T.me.muted_until)>new Date();
+  return head('Settings')+
+    '<div class="db">'+
+      '<div class="sec"><h3>Your emails</h3>'+
+        '<div class="field"><label for="p-mode">How you hear about things</label><select id="p-mode">'+
+          sel(T.me.notify_mode,[['normal','Normal: a short email when a task is with you'],['calm','Calm: one digest each weekday morning'],['off','No email: the bell in the app only']])+'</select></div>'+
+        '<div class="row"><button class="btn small" data-act="pause-monday">Pause until Monday</button>'+(paused?'<button class="btn small" data-act="resume">Resume now</button><span class="hint">Paused until '+esc(new Date(T.me.muted_until).toLocaleString([], {weekday:'short',hour:'2-digit',minute:'2-digit'}))+'</span>':'')+'</div>'+
+        '<span class="hint">Your time zone is '+esc(T.tz)+', taken from this browser. Emails only arrive 08:00 to 18:00 on weekdays there.</span></div>'+
+      '<div class="sec"><h3>Board'+(pm?'':' (only the project manager can change these)')+'</h3><div class="grid2">'+
+        '<div class="field"><label for="s-name">Board name</label><input id="s-name" value="'+esc(S.name)+'" maxlength="60"'+dis+'></div>'+
+        '<div class="field"><label for="s-key">Card prefix</label><input id="s-key" class="mono" value="'+esc(S.key)+'" disabled></div>'+
+        '<div class="field"><label for="s-len">Cycle length</label><select id="s-len"'+dis+'>'+sel(s.cycleDays,[[7,'1 week'],[14,'2 weeks'],[21,'3 weeks'],[28,'4 weeks']])+'</select></div>'+
+        '<div class="field"><label for="s-wip">Doing limit</label><select id="s-wip"'+dis+'>'+sel(s.wip,[1,2,3,4,5,6,8,10].map(n=>[n,n+' card'+(n>1?'s':'')]))+'</select></div>'+
+        '<div class="field"><label for="s-stale">Flag as quiet after</label><select id="s-stale"'+dis+'>'+sel(s.staleDays,[2,3,4,5,7].map(n=>[n,n+' days']))+'</select></div>'+
+        '<div class="field"><label for="s-btz">Board time zone</label><input id="s-btz" list="tzlist" value="'+esc(S.timezone||'UTC')+'"'+dis+'><datalist id="tzlist">'+(typeof Intl.supportedValuesOf==='function'?Intl.supportedValuesOf('timeZone').map(z=>'<option value="'+z+'">').join(''):'')+'</datalist></div>'+
+      '</div>'+(pm?'<div class="row"><button class="btn" data-act="roll-now">Start the next cycle now</button></div>':'')+'</div>'+
+      (pm?'<div class="sec"><h3>Keep a copy</h3><span class="hint">The free database plan has no automatic backups. This copies a readable list of the cards on the board, for your records. It is not a one-click restore. For everything, export the tables as CSV from Supabase (Table Editor).</span>'+
+        '<textarea id="s-export" class="mono-area" rows="3" readonly></textarea><div class="row"><button class="btn small" data-act="copy-export">'+ic('copy')+'Copy card list</button></div></div>':'')+
+      '<div class="sec"><h3>Account</h3><div class="row"><span class="hint">Signed in as '+esc(T.me.email)+'</span><span class="grow"></span><button class="btn" data-act="sign-out">Sign out</button></div></div>'+
+    '</div>';
+}
+
+/* ----- the project manager's team and email panel ----- */
+function opt(v,cur,label){return '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+label+'</option>';}
+function personRow(p){
+  const armed=T.armed===p.id;
+  const paused=p.muted_until&&new Date(p.muted_until)>new Date();
+  const pmEmail=p.role==='pm';
+  return '<div class="prow'+(p.active?'':' off')+'" data-pid="'+p.id+'">'+
+    '<input data-f="name" value="'+esc(p.name)+'" aria-label="Name" maxlength="80">'+
+    '<input data-f="email" type="email" value="'+esc(p.email)+'" aria-label="Email"'+(pmEmail?' disabled title="To change a project manager\'s email, make them a member first, change it, then make them a PM again."':'')+'>'+
+    '<select data-f="role" aria-label="Role">'+opt('member',p.role,'Member')+opt('pm',p.role,'PM')+'</select>'+
+    '<button class="btn small'+(armed?' danger':'')+'" data-act="team-del" data-pid="'+p.id+'">'+(armed?'Really remove?':'Remove')+'</button>'+
+    '<div class="sub2"><label class="chk"><input type="checkbox" data-f="active"'+(p.active?' checked':'')+'>Active</label>'+
+      '<label class="chk">Emails <select data-f="notify_mode">'+opt('normal',p.notify_mode,'Normal')+opt('calm',p.notify_mode,'Digest only')+opt('off',p.notify_mode,'None')+'</select></label>'+
+      (p.role==='pm'?'<label class="chk" title="Email me every move (not recommended)"><input type="checkbox" data-f="pm_instant"'+(p.pm_instant?' checked':'')+'>Email me every move</label>':'')+
+      '<span class="muted">'+esc(p.timezone)+(paused?', paused':'')+'</span></div></div>';
+}
+function emailPanelHTML(){
+  const s=T.settings,st=T.status;
+  if(!s)return '<p class="muted" style="margin:0">Loading email settings...</p>';
+  const base=s.app_url||(location.origin+location.pathname);
+  return emailFieldsHTML(s,base)+'<div class="hint" id="e-status">'+statusHTML()+'</div>';
+}
+function statusHTML(){
+  const st=T.status;let statusLine='';
+  if(st){
+    statusLine=''+(st.has_key?'<span class="okline">API key saved.</span>':'<span class="badline">No API key saved yet.</span> See step 6 in docs/SETUP.md.')+
+      ' Sent today: '+st.sent_today+' of '+st.daily_cap+'.'+
+      (st.last_at?' Last: '+esc(st.last_kind||'')+' to '+esc(st.last_to||'')+', '+esc(st.last_status||'')+(st.last_detail?' ('+esc(st.last_detail)+')':'')+'.':'');
+  }
+  return statusLine;
+}
+function emailFieldsHTML(s,base){
+  return '<div class="row"><label class="chk"><input type="checkbox" id="e-enabled"'+(s.emails_enabled?' checked':'')+'><b>Send emails</b></label>'+
+      '<span class="hint">Turn this off to stop all email at once. The bell keeps working.</span></div>'+
+    '<div class="grid2 wide">'+
+      '<div class="field"><label for="e-provider">Email service</label><select id="e-provider">'+opt('resend',s.provider,'Resend (needs your own domain)')+opt('brevo',s.provider,'Brevo')+opt('log',s.provider,'Log only (no sending)')+'</select></div>'+
+      '<div class="field"><label for="e-fromname">From name</label><input id="e-fromname" value="'+esc(s.from_name)+'" maxlength="60"></div>'+
+      '<div class="field"><label for="e-fromemail">From email</label><input id="e-fromemail" type="email" value="'+esc(s.from_email)+'" placeholder="board@yourcompany.com"></div>'+
+      '<div class="field"><label for="e-appurl">Board web address</label><input id="e-appurl" value="'+esc(base)+'"></div>'+
+    '</div>'+
+    '<label class="chk"><input type="checkbox" id="e-hide"'+(s.hide_titles?' checked':'')+'>Keep card titles out of emails</label>'+
+    '<div class="row"><button class="btn primary" data-act="team-save">Save email settings</button><button class="btn" data-act="team-test">Send me a test email</button><span id="e-msg" class="hint" role="status"></span></div>';
+}
+function emailPatch(){
+  return {provider:$('#e-provider').value,from_name:$('#e-fromname').value.trim()||'Nudge Board',from_email:$('#e-fromemail').value.trim(),
+    app_url:$('#e-appurl').value.trim(),hide_titles:$('#e-hide').checked,updated_at:new Date().toISOString()};
+}
+function teamHTML(){
+  const rows=(T.people||[]).map(personRow).join('');
+  const act=(T.people||[]).filter(p=>p.active);
+  return head('Team and email')+'<div class="db">'+
+    '<div class="sec"><h3>People</h3><span class="hint">Only people listed here can open the board. Give each person their name and work email. Only a PM can give tasks to other people.</span>'+
+      '<div id="prows">'+rows+'</div>'+
+      '<div class="addrow"><input id="t-name" placeholder="Name" aria-label="New person name" maxlength="80"><input id="t-email" type="email" placeholder="email@company.com" aria-label="New person email"><select id="t-role" aria-label="Role">'+opt('member','member','Member')+opt('pm','member','PM')+'</select><button class="btn primary" data-act="team-add">Add</button></div>'+
+      '<span id="t-msg" class="hint" role="status"></span></div>'+
+    '<div class="sec"><h3>Who reviews by default</h3><div class="field"><label for="t-rev">When a card reaches Review and has no reviewer</label><select id="t-rev"><option value="">The first project manager</option>'+
+      act.map(p=>opt(p.id,S.reviewerId||'',esc(p.name))).join('')+'</select></div></div>'+
+    '<div class="sec"><h3>Email</h3><div id="emailpanel">'+emailPanelHTML()+'</div></div>'+
+  '</div><div class="df"><span class="hint">Emails wait 3 minutes before sending, skip weekends and nights, and never tell you about your own moves.</span><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
+}
+async function openTeam(){
+  openDialog('team',teamHTML());
+  try{
+    const [s,st]=await Promise.all([B.getSettings(),B.emailStatus()]);
+    T.settings=s;T.status=st;
+    if(dlg.dataset.kind==='team'){const ep=$('#emailpanel');if(ep)ep.innerHTML=emailPanelHTML();}
+  }catch(e){const ep=$('#emailpanel');if(ep)ep.innerHTML='<p class="badline" style="margin:0">'+esc(e.message||'Could not load email settings')+'</p>';}
+}
+function rerenderPeople(){
+  const ae=document.activeElement,row=ae&&ae.closest?ae.closest('#prows .prow'):null;
+  const keep=row?{pid:row.dataset.pid,f:ae.dataset.f,act:ae.dataset.act}:null;
+  const el=$('#prows');if(el)el.innerHTML=(T.people||[]).map(personRow).join('');
+  const rv=$('#t-rev');if(rv){const act=(T.people||[]).filter(p=>p.active);rv.innerHTML='<option value="">The first project manager</option>'+act.map(p=>opt(p.id,S.reviewerId||'',esc(p.name))).join('');}
+  if(keep){
+    const target=$('#prows .prow[data-pid="'+keep.pid+'"] '+(keep.f?'[data-f="'+keep.f+'"]':'[data-act="'+keep.act+'"]'));
+    if(target)target.focus();
+  }
+}
+function teamDialogChange(e){
+  const el=e.target,id=el.id,kind=dlg.dataset.kind;
+  if(kind==='team'){
+    const row=el.closest&&el.closest('.prow');
+    if(row&&el.dataset.f){
+      const f=el.dataset.f;let v=el.type==='checkbox'?el.checked:el.value;
+      if(f==='email')v=v.trim().toLowerCase();if(f==='name')v=v.trim();
+      (async()=>{
+        let failed=false;
+        try{await B.updatePerson(row.dataset.pid,{[f]:v});}catch(err){failed=true;toast(err.message||'That change did not save.');}
+        try{await refreshPeople();}catch(err){}
+        if(failed||f==='role'||f==='active'||f==='email')rerenderPeople();
+        if(row.dataset.pid===T.me.id){
+          try{T.me=(await B.whoami())||T.me;}catch(err){}
+          if(!isPM()){dlg.close();reloadAll({discard:true}).catch(()=>{});}
+          renderTools();
+        }
+      })();
+      return true;
+    }
+    if(id==='t-rev'){S.reviewerId=el.value||null;commit();return true;}
+    if(id==='e-enabled'){
+      (async()=>{
+        const m=$('#e-msg'),patch=Object.assign(emailPatch(),{emails_enabled:el.checked});
+        if(el.checked&&patch.provider!=='log'&&!patch.from_email){el.checked=false;if(m){m.textContent='Enter the From email first.';m.className='hint badline';}return;}
+        try{await B.updateSettings(patch);Object.assign(T.settings,patch);if(m){m.textContent=el.checked?'Emails are on. Settings saved.':'Emails are off. Settings saved.';m.className='hint okline';}}
+        catch(err){el.checked=!el.checked;if(m){m.textContent=err.message||'Could not change that.';m.className='hint badline';}}
+      })();
+      return true;
+    }
+  }
+  if(kind==='settings'){
+    if(id==='p-mode'){(async()=>{try{T.me=await B.updateMyPrefs(el.value,null,null)||T.me;toast('Saved.');}catch(err){toast(err.message||'Could not save.');}})();return true;}
+    if(id==='s-btz'){S.timezone=el.value.trim()||'UTC';commit();return true;}
+  }
+  return false;
+}
+function teamDialogClick(kind,a,act,e){
+  if(kind==='notes'){
+    const n=e.target.closest('.note');
+    if(n&&n.dataset.card&&cardById(n.dataset.card)){dlg.close();openCard(n.dataset.card);return true;}
+    return false;
+  }
+  if(kind==='team'){
+    if(a==='team-add'){
+      const name=$('#t-name').value.trim(),email=$('#t-email').value.trim().toLowerCase(),role=$('#t-role').value,m=$('#t-msg');
+      if(!name||!/^\S+@\S+\.\S+$/.test(email)){m.textContent='Enter a name and a work email.';m.className='hint badline';return true;}
+      (async()=>{
+        try{
+          await B.insertPerson({name,email,role,timezone:T.tz});
+          $('#t-name').value='';$('#t-email').value='';
+          await refreshPeople();rerenderPeople();
+          m.textContent=name+' can now sign in with '+email+'.';m.className='hint okline';
+        }catch(err){m.textContent=/duplicate|unique/i.test(err.message||'')?'That email is already on the team.':(err.message||'Could not add that person.');m.className='hint badline';}
+      })();
+      return true;
+    }
+    if(a==='team-del'){
+      const id=act.dataset.pid;
+      if(T.armed!==id){T.armed=id;rerenderPeople();return true;}
+      T.armed=null;
+      (async()=>{try{await B.deletePerson(id);}catch(err){toast(err.message||'Could not remove that person.');}try{await refreshPeople();rerenderPeople();}catch(err){}})();
+      return true;
+    }
+    if(a==='team-save'){
+      const m=$('#e-msg');
+      const patch=emailPatch();
+      (async()=>{
+        try{await B.updateSettings(patch);Object.assign(T.settings,patch);m.textContent='Saved.';m.className='hint okline';}
+        catch(err){m.textContent=err.message||'Could not save.';m.className='hint badline';}
+      })();
+      return true;
+    }
+    if(a==='team-test'){
+      const m=$('#e-msg');m.textContent='Sending...';m.className='hint';
+      (async()=>{
+        try{
+          const r=await B.sendTestEmail();
+          m.textContent=r.message;m.className='hint '+(r.ok?'okline':'badline');
+          setTimeout(async()=>{try{T.status=await B.emailStatus();const st=$('#e-status');if(dlg.dataset.kind==='team'&&st)st.innerHTML=statusHTML();}catch(err){}},70000);
+        }catch(err){m.textContent=err.message||'Could not send.';m.className='hint badline';}
+      })();
+      return true;
+    }
+  }
+  if(kind==='settings'){
+    if(a==='pause-monday'||a==='resume'){
+      (async()=>{try{T.me=await B.updateMyPrefs(null,null,a==='resume'?'clear':'monday')||T.me;openDialog('settings',settingsHTML());$('#s-export')&&($('#s-export').value=exportText());}catch(err){toast(err.message||'Could not save.');}})();
+      return true;
+    }
+    if(a==='sign-out'){(async()=>{try{await B.signOut();}catch(err){}location.reload();})();return true;}
+    if(a==='roll-now'){
+      (async()=>{try{await B.rollNow();await reloadAll();toast('New cycle started. Unfinished cards rolled over.');dlg.close();}catch(err){toast(err.message||'Could not start a new cycle.');}})();
+      return true;
+    }
+    if(a==='copy-export'){
+      copyText($('#s-export').value).then(ok=>{act.lastChild.textContent=ok?'Copied':'Select and copy';setTimeout(()=>{act.lastChild.textContent='Copy card list';},1400);});
+      $('#s-export').select();return true;
+    }
+  }
+  return false;
+}
+
+/* ---------- boot ---------- */
+const narrow=window.matchMedia('(max-width:640px)');
+const setPlaceholder=()=>{$('#add').placeholder=narrow.matches?'Add a task, e.g. Fix login fri !high':'Add a task: Fix login timeout fri !high @sam #auth';};
+setPlaceholder();
+if(narrow.addEventListener)narrow.addEventListener('change',setPlaceholder);
+if(TEAM_CONFIGURED){
+  S=blankState();S.cards=[];
+  bootTeam();
+}else{
+  S=load()||sampleState();
+  const rolled=autoRoll();
+  save();
+  renderAll();
+  if(rolled)toast('Cycle '+S.cycle.n+' started. '+rolled.done+' done archived, '+rolled.rolled+' rolled over.');
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){T.hiddenAt=NOW();return;}
+  if(T.on){if(T.ready&&NOW()-(T.hiddenAt||NOW())>5*60000)refreshTeam();return;}
+  const r=autoRoll();
+  if(r){save();toast('Cycle '+S.cycle.n+' started. '+r.done+' done archived, '+r.rolled+' rolled over.');}
+  if(!dlg.open)renderAll();
+});
+window.addEventListener('hashchange',()=>{if(T.on&&T.ready)openDeepLink();});
+})();
+</script>
+</body>
+</html>
