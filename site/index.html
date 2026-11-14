@@ -131,6 +131,10 @@ button.chip.on{background:var(--accent);color:var(--accent-ink)}
 .count.over{color:var(--warn);font-weight:600}
 .sub{margin:0;padding:0 4px;font-size:12.5px;color:var(--ink3)}
 .sub.warn{color:var(--warn)}
+.sub-btn{display:inline-flex;align-items:center;gap:4px;align-self:flex-start;min-height:24px;border:0;border-radius:6px;background:none;font:inherit;font-size:12.5px;color:var(--ink3);cursor:pointer;text-align:left}
+.sub-btn .ic{width:12px;height:12px}
+.sub-btn:hover{color:var(--accent);text-decoration:underline}
+.sub-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .cards{display:flex;flex-direction:column;gap:10px;min-height:24px}
 .empty{padding:14px 8px;text-align:center;font-size:12.5px;color:var(--ink3)}
 .card{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);cursor:pointer}
@@ -797,7 +801,7 @@ function reviewerOf(c){
 function canEdit(c){return !T.on||isPM()||c.assigneeId===myId()||(!c.assigneeId&&c.createdBy===myId());}
 // QA Test is signed off by the card's reviewer; Security by anyone marked as a security reviewer
 const isSecurityReviewer=()=>!!(T.me&&T.me.security);
-function isReviewer(c){return T.on&&((c.status==='review'&&reviewerOf(c)===myId())||(c.status==='security'&&isSecurityReviewer()));}
+function isReviewer(c){return T.on&&((c.status==='review'&&reviewerOf(c)===myId())||(c.status==='security'&&(isSecurityReviewer()||S.secReviewerId===myId())));}
 function canMove(c){return canEdit(c)||!c.assigneeId||isReviewer(c);}
 const NO_MOVE='Only the person working on this card, its reviewer, or a project manager can move it.';
 const people=()=>T.on?T.team.filter(p=>p.active).map(p=>p.name).sort():Array.from(new Set(S.cards.map(c=>c.assignee).filter(Boolean))).sort();
@@ -1604,6 +1608,34 @@ function backlogGroupsHTML(list,total){
   return group('next','Next',list.filter(c=>c.horizon==='next'),'Drag what should come next here.')+
          group('later','Later',list.filter(c=>c.horizon!=='next'),'Ideas and someday tasks.');
 }
+/* ---------- default reviewers: one for QA Test, one for Security, chosen on the column (shared board) ---------- */
+// A card in one of these columns with no reviewer of its own goes to the column's default reviewer:
+// they get the email when it arrives, is sent back to the column, or is blocked there (the database decides).
+const COLREV={review:{key:'reviewerId',name:'QA Test'},security:{key:'secReviewerId',name:'Security'}};
+function colReviewerName(st){
+  const p=teamPerson(S[COLREV[st].key]);
+  if(p&&p.active)return p.name;
+  if(st==='review'){const pm=T.team.find(x=>x.active&&x.role==='pm');return pm?pm.name+' (first PM)':'the first PM';}
+  const sec=T.team.filter(x=>x.active&&x.security);
+  return sec.length===1?sec[0].name:sec.length?'every security reviewer':'nobody yet';
+}
+function colReviewerHTML(st){
+  const label='Reviewer: '+esc(colReviewerName(st));
+  return isPM()?'<button class="sub sub-btn" data-act="col-reviewer" data-status="'+st+'" data-tip="Choose who reviews cards here by default">'+label+ic('chevr')+'</button>'
+    :'<p class="sub">'+label+'</p>';
+}
+function colReviewerDialogHTML(st){
+  const c=COLREV[st],cur=S[c.key]||'';
+  const opts=T.team.filter(p=>p.active).map(p=>'<option value="'+p.id+'"'+(p.id===cur?' selected':'')+'>'+esc(p.name)+(st==='security'&&p.security?' (security reviewer)':'')+'</option>').join('');
+  return head(c.name+' reviewer')+'<div class="db"><div class="sec">'+
+    '<div class="field"><label for="cr-who">Default reviewer</label>'+
+      '<select id="cr-who" data-status="'+st+'"><option value="">'+(st==='review'?'The first project manager':'Every security reviewer')+'</option>'+opts+'</select>'+
+      '<span class="hint">'+(st==='review'
+        ?'Gets the email when a card reaches QA Test, is sent back to it, or is blocked in it. A card with its own reviewer (More options on the card) goes to that person instead.'
+        :'Gets the email when a card reaches Security, is sent back to it, or is blocked in it. "Every security reviewer" tells everyone ticked as a security reviewer in Team.')+'</span></div>'+
+    '<span id="cr-msg" class="hint" role="status"></span></div></div>'+
+    '<div class="df"><span class="grow"></span><button class="btn primary" data-act="close">Done</button></div>';
+}
 const EMPTY={backlog:'Ideas and someday tasks live here.',todo:'Type a task above to add one.',doing:'Nothing in progress.',review:'Nothing waiting on QA.',security:'Nothing waiting on security.',done:'Finished cards land here.'};
 function renderBoard(){
   const ae=document.activeElement,keep=ae&&ae.classList&&ae.classList.contains('card')?ae.dataset.id:null;
@@ -1617,6 +1649,7 @@ function renderBoard(){
       if(all.length>S.settings.wip){cls=' over';sub='<p class="sub warn">Over the limit. Finish something before you start more.</p>';}
     }
     if(st.id==='security')sub='<p class="sub">Cyber-security sign-off</p>';
+    if(T.on&&COLREV[st.id])sub=colReviewerHTML(st.id);
     if(st.id==='done')sub='<p class="sub">Archived when the cycle ends</p>';
     // A hidden backlog becomes a slim strip: still a drop target, one click to show it again
     if(st.id==='backlog'&&ui.hideBacklog)return '<section class="col backlog collapsed" data-status="backlog" aria-label="Backlog, hidden">'+
@@ -2260,6 +2293,7 @@ document.addEventListener('click',e=>{
       case 'open-help':openDialog('help',helpHTML());return;
       case 'open-team':openTeam();return;
       case 'open-cycle':openCycle();return;
+      case 'col-reviewer':if(T.on&&isPM()&&COLREV[act.dataset.status]){openDialog('colrev',colReviewerDialogHTML(act.dataset.status));$('#cr-who').focus();}return;
       case 'open-notes':openNotes();return;
       case 'undo':undo();return;
       case 'toggle-backlog':
@@ -2429,6 +2463,11 @@ dlg.addEventListener('input',e=>{
 dlg.addEventListener('change',e=>{
   const kind=dlg.dataset.kind,id=e.target.id,el=e.target;
   if(T.on&&teamDialogChange(e))return;
+  if(kind==='colrev'&&id==='cr-who'){
+    S[COLREV[el.dataset.status].key]=el.value||null;commit();
+    const m=$('#cr-msg');if(m){m.textContent='Saved.';m.className='hint okline';}
+    return;
+  }
   if(kind==='cycle'&&id==='c-which'){showShipped();const p=$('#r-preview');if(p)p.innerHTML='';return;}
   if(kind==='import'&&id==='imp-done'){$('#imp-out').innerHTML=importPreviewHTML(T.importParsed);return;}
   if(kind==='import'&&id==='imp-file'&&el.files&&el.files[0]){
@@ -2705,9 +2744,9 @@ function cardFromRow(r){
     rolled:r.rolled||0,createdBy:r.created_by||null,created:ts(r.created_at),touched:ts(r.touched_at),statusSince:ts(r.status_since),doneAt:ts(r.done_at),version:r.version};
 }
 const cardSig=c=>JSON.stringify(rowFromCard(c))+'|'+c.touched;
-const boardSig=()=>JSON.stringify([S.name,S.settings.cycleDays,S.settings.wip,S.settings.staleDays,S.reviewerId||null,S.timezone||'UTC',S.goals||'']);
+const boardSig=()=>JSON.stringify([S.name,S.settings.cycleDays,S.settings.wip,S.settings.staleDays,S.reviewerId||null,S.secReviewerId||null,S.timezone||'UTC',S.goals||'']);
 const boardPatch=()=>({name:S.name,cycle_goals:S.goals||'',cycle_days:S.settings.cycleDays,wip_limit:S.settings.wip,stale_days:S.settings.staleDays,
-  default_reviewer_id:S.reviewerId||null,timezone:S.timezone||'UTC',updated_at:new Date().toISOString()});
+  default_reviewer_id:S.reviewerId||null,security_reviewer_id:S.secReviewerId||null,timezone:S.timezone||'UTC',updated_at:new Date().toISOString()});
 
 const renderSoon=(function(){let t;return function(){clearTimeout(t);t=setTimeout(renderAll,120);};})();
 const teamRefreshSoon=(function(){let t;return function(){clearTimeout(t);t=setTimeout(()=>{refreshPeople().catch(()=>{});},800);};})();
@@ -2715,7 +2754,7 @@ const teamRefreshSoon=(function(){let t;return function(){clearTimeout(t);t=setT
 function applyLoaded(d){
   T.team=d.team;T.people=d.people;T.notes=d.notes;
   const b=d.board;
-  S={v:1,name:b.name,key:b.card_prefix,nextNum:0,timezone:b.timezone,reviewerId:b.default_reviewer_id||null,
+  S={v:1,name:b.name,key:b.card_prefix,nextNum:0,timezone:b.timezone,reviewerId:b.default_reviewer_id||null,secReviewerId:b.security_reviewer_id||null,
     settings:{cycleDays:b.cycle_days,wip:b.wip_limit,staleDays:b.stale_days},goals:b.cycle_goals||'',
     cycle:{n:b.cycle_n,start:b.cycle_start},
     history:d.history.map(h=>({n:h.n,start:h.start_date,end:h.end_date,done:h.done,total:h.total})),
@@ -3315,7 +3354,6 @@ function emailPatch(){
 }
 function teamHTML(){
   const rows=(T.people||[]).map(personRow).join('');
-  const act=(T.people||[]).filter(p=>p.active);
   return head('Team and email')+'<div class="db">'+
     '<div class="sec"><h3>People</h3><span class="hint">Only people listed here can open the board. Add someone, then send them their join code by chat or in person so they can set a password. Only a PM can give tasks to other people.</span>'+
       '<div id="prows" class="plist">'+rows+'</div>'+
@@ -3327,8 +3365,7 @@ function teamHTML(){
       '<span id="t-msg" class="hint" role="status"></span></div>'+
     '<div class="sec"><h3>GitHub</h3><span class="hint">Cards move on their own when people push branches, open pull requests and merge. Nobody has to update the board by hand.</span><div id="ghpanel">'+githubPanelHTML()+'</div></div>'+
     '<div class="sec"><h3>Moving in</h3><span class="hint">Bring your cards over from Trello, Notion, GitHub Issues, or any CSV file.</span><div class="row"><button class="btn" data-act="open-import">Bring in cards</button></div></div>'+
-    '<div class="sec"><h3>Who reviews by default</h3><div class="field"><label for="t-rev">When a card reaches Review and has no reviewer</label><select id="t-rev"><option value="">The first project manager</option>'+
-      act.map(p=>opt(p.id,S.reviewerId||'',esc(p.name))).join('')+'</select></div></div>'+
+    '<div class="sec"><h3>Reviewers</h3><span class="hint">Choose who reviews QA Test and who signs off Security on the board itself: click <b>Reviewer</b> under each column\'s name. Tick <b>Security reviewer</b> next to a person above to add them to the security reviewers.</span></div>'+
     '<div class="sec"><h3>Email</h3><div id="emailpanel">'+emailPanelHTML()+'</div></div>'+
   '</div><div class="df"><span class="hint">Emails wait 3 minutes, skip nights and weekends, and go out on Claude\'s next run (every 2 hours, Monday to Saturday).</span><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
 }
@@ -3353,7 +3390,6 @@ function rerenderPeople(){
   const ae=document.activeElement,row=ae&&ae.closest?ae.closest('#prows .prow'):null;
   const keep=row?{pid:row.dataset.pid,f:ae.dataset.f,act:ae.dataset.act}:null;
   const el=$('#prows');if(el)el.innerHTML=(T.people||[]).map(personRow).join('');
-  const rv=$('#t-rev');if(rv){const act=(T.people||[]).filter(p=>p.active);rv.innerHTML='<option value="">The first project manager</option>'+act.map(p=>opt(p.id,S.reviewerId||'',esc(p.name))).join('');}
   if(keep){
     const target=$('#prows .prow[data-pid="'+keep.pid+'"] '+(keep.f?'[data-f="'+keep.f+'"]':'[data-act="'+keep.act+'"]'));
     if(target)target.focus();
@@ -3381,7 +3417,6 @@ function teamDialogChange(e){
       })();
       return true;
     }
-    if(id==='t-rev'){S.reviewerId=el.value||null;commit();return true;}
     if(id==='e-enabled'){
       (async()=>{
         const m=$('#e-msg'),patch=Object.assign(emailPatch(),{emails_enabled:el.checked});

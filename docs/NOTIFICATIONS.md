@@ -11,17 +11,20 @@ Three channels:
 
 ## Who is told what
 
+Each of the **QA Test** and **Security** columns has a default reviewer. A project manager chooses it by clicking **Reviewer** under the column's name on the board.
+
 | Something happens | Who | How |
 | --- | --- | --- |
 | The PM assigns a card to Sam (in any column except Done) | Sam | Bell right away. One short email about 3 minutes later, unless Sam has already picked the card up. |
-| A card moves to **QA Test** (or is created there) | The card's reviewer, else the board's default reviewer, else the first active PM. Inactive people are skipped. | Bell right away. One short email about 3 minutes later. |
-| A card moves to **Security** | Everyone ticked as **Security reviewer** in Team | Bell right away. One short email about 3 minutes later ("Security sign-off: …"). |
+| A card moves to **QA Test** (or is created there) | The card's reviewer, else QA Test's default reviewer, else the first active PM. Inactive people are skipped. | Bell right away. One short email about 3 minutes later. |
+| A card moves to **Security** (or is created there) | Security's default reviewer, else everyone ticked as **Security reviewer** in Team | Bell right away. One short email about 3 minutes later ("Security sign-off: …"). |
 | A reviewer sends a card back to To do or Doing (from QA Test or Security) | The card's owner | Same ("Back with you"). |
+| A card is sent back to QA Test (from Security or Done), or reopened into Security | That column's reviewer, as in the two rows above | Same ("Back with you"). |
 | Someone pulls Sam's card into To do or Doing from Backlog or Done, or reopens it | Sam | Same, because it has just landed in Sam's court. |
 | Someone else shuffles Sam's card between To do and Doing | Sam | Bell only, plus Sam's next morning digest. |
 | Someone else moves Sam's card anywhere else (for example to Done) | Sam | Bell, plus Sam's next morning digest. |
 | Any move by a member | Each PM | Bell. Included in the PM's digest. No instant email. |
-| A card is marked **Blocked** | Each PM | Bell. One short email about 3 minutes later. |
+| A card is marked **Blocked** | Each PM, and, for a card in QA Test or Security, that column's reviewer | Bell. One short email about 3 minutes later. |
 | A card is unblocked | Each PM | Bell only. |
 | A card is marked blocked and waiting on Sam | Sam | Bell and desktop notification right away. One short email about 3 minutes later ("Waiting on you: …"), only while the card is still blocked on Sam. |
 | Someone @mentions Sam in a comment | Sam | Bell and desktop notification right away. One short email about 3 minutes later ("Mentioned: …"). |

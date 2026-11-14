@@ -215,6 +215,11 @@ alter table public.cards add constraint cards_status_check
 -- Security reviewers: the people who sign off the Security step (the PM ticks them in Team)
 alter table public.people add column if not exists security boolean not null default false;
 
+-- Default reviewers, one per column, chosen by the PM on the column itself:
+--   default_reviewer_id    QA Test, for cards without their own reviewer
+--   security_reviewer_id   Security. Empty means every security reviewer.
+alter table public.board add column if not exists security_reviewer_id uuid references public.people (id) on delete set null;
+
 -- Who is away, and until when (people set this themselves in Settings)
 alter table public.people add column if not exists away_until date;
 
@@ -675,6 +680,23 @@ language sql stable security definer set search_path = '' as $$
     (select id from public.people where role = 'pm' and active order by created_at, id limit 1))
 $$;
 
+-- Who signs off Security: the column's default reviewer, else every security reviewer. Inactive people are skipped.
+create or replace function private.security_reviewers(b public.board) returns uuid[]
+language sql stable security definer set search_path = '' as $$
+  select case when exists (select 1 from public.people where id = b.security_reviewer_id and active)
+              then array[b.security_reviewer_id]
+              else coalesce((select array_agg(id order by created_at, id) from public.people where security and active), '{}') end
+$$;
+
+-- The reviewer(s) a card is with while it sits in QA Test or Security; empty in other columns
+create or replace function private.column_reviewers(c public.cards, b public.board) returns uuid[]
+language sql stable security definer set search_path = '' as $$
+  select case c.status
+    when 'review' then array_remove(array[private.reviewer_for(c, b)], null)
+    when 'security' then private.security_reviewers(b)
+    else '{}'::uuid[] end
+$$;
+
 create or replace function private.cards_after() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -685,6 +707,7 @@ declare
   owner uuid;
   reason text;
   pm_id uuid;
+  sec uuid[] := '{}';
   now_ts timestamptz := private.now_utc();
 begin
   select * into b from public.board where id = 1;
@@ -703,6 +726,12 @@ begin
       if owner is not null and owner is distinct from actor then
         perform private.notify(owner, new, 'turn', 'review', actor_name, null, 'review');
       end if;
+    elsif new.status = 'security' then
+      foreach pm_id in array private.security_reviewers(b) loop
+        if pm_id is distinct from actor then
+          perform private.notify(pm_id, new, 'turn', 'security', actor_name, null, 'security');
+        end if;
+      end loop;
     end if;
     if new.assignee_id is not null and new.assignee_id is distinct from actor and new.status <> 'done' then
       perform private.notify(new.assignee_id, new, 'turn', 'assigned', actor_name);
@@ -719,12 +748,14 @@ begin
     insert into public.card_events (card_id, card_key, title, from_status, to_status, actor_id, at)
     values (new.id, ckey, new.title, old.status, new.status, actor, now_ts);
 
+    if new.status = 'security' then sec := private.security_reviewers(b); end if;
     -- Whose turn is it now?
     owner := case
       when new.status in ('todo', 'doing') then new.assignee_id
       when new.status = 'review' then private.reviewer_for(new, b)
       else null end;
     reason := case
+      when new.status = 'review' and old.status in ('security', 'done') then 'sent_back'   -- back to QA Test
       when new.status = 'review' then 'review'
       when old.status in ('review', 'security') and new.status in ('todo', 'doing') then 'sent_back'
       else 'moved' end;
@@ -739,14 +770,17 @@ begin
 
     -- The assignee hears about it in the digest if someone else moved it
     if new.assignee_id is not null and new.assignee_id is distinct from actor
-       and new.assignee_id is distinct from owner then
+       and new.assignee_id is distinct from owner and not (new.assignee_id = any (sec)) then
       perform private.notify(new.assignee_id, new, 'update', 'moved', actor_name, old.status, new.status);
     end if;
 
-    -- Security: every security reviewer is asked to sign it off
+    -- Security: the column's default reviewer (else every security reviewer) is asked to sign it off
     if new.status = 'security' then
-      for pm_id in select id from public.people where security and active and id is distinct from actor loop
-        perform private.notify(pm_id, new, 'turn', 'security', actor_name, old.status, new.status);
+      foreach pm_id in array sec loop
+        if pm_id is distinct from actor then
+          perform private.notify(pm_id, new, 'turn', case when old.status = 'done' then 'sent_back' else 'security' end,
+                                 actor_name, old.status, new.status);
+        end if;
       end loop;
     end if;
 
@@ -754,7 +788,7 @@ begin
     for pm_id in
       select id from public.people
        where role = 'pm' and active and id is distinct from actor and id is distinct from owner
-         and id is distinct from new.assignee_id and not (new.status = 'security' and security)
+         and id is distinct from new.assignee_id and not (id = any (sec))
     loop
       perform private.notify(pm_id, new, 'update', 'moved', actor_name, old.status, new.status);
     end loop;
@@ -773,6 +807,12 @@ begin
   if new.blocked and not old.blocked then
     for pm_id in select id from public.people where role = 'pm' and active and id is distinct from actor loop
       perform private.notify(pm_id, new, 'alert', 'blocked', actor_name);
+    end loop;
+    -- A card blocked in QA Test or Security is stuck with that column's reviewer: they hear too (PMs already have)
+    foreach pm_id in array private.column_reviewers(new, b) loop
+      if pm_id is distinct from actor and not exists (select 1 from public.people where id = pm_id and role = 'pm') then
+        perform private.notify(pm_id, new, 'alert', 'blocked', actor_name);
+      end if;
     end loop;
   elsif old.blocked and not new.blocked and new.status <> 'done' then
     for pm_id in select id from public.people where role = 'pm' and active and id is distinct from actor loop
@@ -1186,9 +1226,10 @@ begin
     when 'review' then
       return c.status = 'review' and private.reviewer_for(c, b) = q.recipient_id;
     when 'security' then
-      return c.status = 'security' and exists (select 1 from public.people where id = q.recipient_id and security and active);
+      return c.status = 'security' and q.recipient_id = any (private.security_reviewers(b));
     when 'sent_back' then
-      return c.assignee_id = q.recipient_id and c.status in ('todo', 'doing');
+      return (c.status in ('todo', 'doing') and c.assignee_id = q.recipient_id)
+          or q.recipient_id = any (private.column_reviewers(c, b));
     when 'moved' then
       return c.assignee_id = q.recipient_id and c.status = coalesce(q.payload ->> 'to', c.status);
     when 'blocked' then
@@ -1771,7 +1812,7 @@ begin
             case when rid is null then (case s.provider when 'claude' then 'Waiting for Claude to send it' else 'Logged only (provider is set to log)' end) end, now_ts,
             case when rid is null then now_ts end);
     return jsonb_build_object('ok', true, 'message',
-      case when rid is null and s.provider = 'claude' then 'Test email is waiting for Claude. It goes out the next time your Claude task runs.'
+      case when rid is null and s.provider = 'claude' then 'Test email is waiting for Claude. It goes out on the Claude task''s next run (every 2 hours). To send it now: in the Claude app, open Scheduled and run "Nudge Board: send waiting emails".'
            when rid is null then 'Provider is set to log, so nothing was sent.' else 'Test email sent. It should arrive within a minute.' end);
   exception when others then
     insert into private.email_log (id, recipient_id, to_email, kind, subject, provider, status, detail, created_at, finished_at)
@@ -2240,7 +2281,7 @@ revoke all on all tables in schema private from public, anon, authenticated;
 revoke all on all functions in schema private from public, anon, authenticated;
 
 grant select on public.board, public.cards, public.card_events, public.cycle_history, public.notifications, public.team to authenticated;
-grant update (name, timezone, wip_limit, stale_days, cycle_days, default_reviewer_id, cycle_goals, updated_at) on public.board to authenticated;
+grant update (name, timezone, wip_limit, stale_days, cycle_days, default_reviewer_id, security_reviewer_id, cycle_goals, updated_at) on public.board to authenticated;
 grant select (id, name, email, role, timezone, notify_mode, pm_instant, active, muted_until, created_at, user_id, join_code, away_until, security) on public.people to authenticated;
 grant insert (name, email, role, timezone, notify_mode, pm_instant, active, security) on public.people to authenticated;
 grant update (name, email, role, timezone, notify_mode, pm_instant, active, muted_until, away_until, security) on public.people to authenticated;
