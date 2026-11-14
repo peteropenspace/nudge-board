@@ -1,0 +1,33 @@
+# Moves Nudge Board cards when you push, open or merge a pull request.
+# Needs three repository secrets: NUDGE_SUPABASE_URL, NUDGE_PUBLISHABLE_KEY, NUDGE_GITHUB_KEY.
+name: Nudge Board
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, ready_for_review, closed]
+jobs:
+  tell-the-board:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send card mentions to Nudge Board
+        env:
+          NUDGE_URL: ${{ secrets.NUDGE_SUPABASE_URL }}
+          NUDGE_ANON: ${{ secrets.NUDGE_PUBLISHABLE_KEY }}
+          NUDGE_KEY: ${{ secrets.NUDGE_GITHUB_KEY }}
+        run: |
+          jq -c --arg event "$GITHUB_EVENT_NAME" '{
+            p_key: env.NUDGE_KEY,
+            p_events: (
+              if $event == "push" then
+                [ .commits[]? | {kind: "commit", text: .message, actor: (.author.username // .author.name)} ]
+                + [ {kind: "branch", text: (.ref | sub("^refs/heads/"; "")), actor: .sender.login} ]
+              elif $event == "pull_request" then
+                [ {kind: (if .action == "closed" then (if .pull_request.merged then "pr_merged" else "pr_closed" end)
+                          elif .pull_request.draft then "commit" else "pr_opened" end),
+                   text: (.pull_request.title + "\n" + .pull_request.head.ref + "\n" + (.pull_request.body // "")),
+                   actor: .sender.login} ]
+              else [] end)
+          }' "$GITHUB_EVENT_PATH" > nudge.json
+          curl -fsS -X POST "$NUDGE_URL/rest/v1/rpc/github_sync" \
+            -H "apikey: $NUDGE_ANON" -H "Content-Type: application/json" \
+            --data @nudge.json

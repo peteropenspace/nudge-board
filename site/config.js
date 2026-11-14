@@ -4,4 +4,6 @@ window.NUDGE_CONFIG = {
   supabaseUrl: 'https://uzvsmopqawgdbhxbaqal.supabase.co',
   supabaseKey: 'sb_publishable_TADjyRcyi1H8CnTDR9bLGw_KA-VW1E-',
   google: false,
+  // The board's public address. Email buttons and pause links point here.
+  appUrl: 'https://peteropenspace.github.io/nudge-board/',
 };

@@ -48,7 +48,7 @@ $$;
 create or replace function private.status_name(s text) returns text
 language sql immutable as $$
   select case s when 'backlog' then 'Backlog' when 'todo' then 'To do' when 'doing' then 'Doing'
-                when 'review' then 'Review' when 'done' then 'Done' else coalesce(s, '') end
+                when 'review' then 'QA Test' when 'security' then 'Security' when 'done' then 'Done' else coalesce(s, '') end
 $$;
 
 -- Escape text for safe use inside HTML.
@@ -70,6 +70,21 @@ language sql immutable as $$
                                             and length(e ->> 't') <= 200 and jsonb_typeof(e -> 'done') = 'boolean', false))
                      from jsonb_array_elements(j) e), true)
     else false end
+$$;
+
+-- A join code like K7PM3QXD (shown as K7PM-3QXD): 8 characters, about 40 random bits.
+-- No 0/O or 1/I so it reads cleanly over chat. Bytes 6 and 8 of a v4 UUID are not fully random, so they are skipped.
+create or replace function private.new_code() returns text
+language sql volatile as $$
+  select string_agg(substr('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', (get_byte(x.b, i) % 32) + 1, 1), '' order by i)
+    from (select decode(replace(gen_random_uuid()::text, '-', ''), 'hex') as b) x,
+         unnest(array[0, 1, 2, 3, 4, 5, 7, 9]) as i
+$$;
+
+-- What someone typed, tidied for comparing with a join code: "k7pm-3qxd " -> "K7PM3QXD"
+create or replace function private.clean_code(t text) returns text
+language sql immutable as $$
+  select upper(regexp_replace(coalesce(t, ''), '[^A-Za-z0-9]', '', 'g'))
 $$;
 
 -- The first moment of the next Monday in a time zone. On a Monday itself, tomorrow.
@@ -113,6 +128,12 @@ create table if not exists public.people (
   created_at timestamptz not null default now()
 );
 create unique index if not exists people_email_key on public.people (lower(email));
+-- Password sign-in: the sign-in account this person claimed with their join code.
+-- The PM shares the code with them (chat, in person). It is cleared once used.
+alter table public.people add column if not exists user_id uuid;
+alter table public.people add column if not exists join_code text;
+alter table public.people add column if not exists join_tries int not null default 0;
+create unique index if not exists people_user_id_key on public.people (user_id) where user_id is not null;
 
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'board_default_reviewer_fk') then
@@ -127,7 +148,7 @@ create table if not exists public.cards (
   id uuid primary key default gen_random_uuid(),
   num int not null,
   title text not null check (length(trim(title)) between 1 and 200),
-  notes text not null default '' check (length(notes) <= 5000),
+  notes text not null default '' check (length(notes) <= 20000),
   status text not null default 'todo' check (status in ('backlog', 'todo', 'doing', 'review', 'done')),
   prio text not null default 'med' check (prio in ('low', 'med', 'high', 'urgent')),
   assignee_id uuid references public.people (id) on delete set null,
@@ -159,6 +180,59 @@ do $$ begin
       check (cardinality(tags) <= 20 and coalesce(length(array_to_string(tags, ',')), 0) <= 600);
   end if;
 end $$;
+
+-- Planning fields:
+--   horizon      backlog cards are either "next" (pull in soon) or "later" (someday)
+--   size         s / m / l instead of story points (empty = not sized)
+--   unplanned    set by the database when a card joins a cycle after its first day
+--   waiting_on   who a blocked card is waiting on; block_note says what for
+alter table public.cards add column if not exists horizon text not null default 'later';
+alter table public.cards add column if not exists size text;
+alter table public.cards add column if not exists unplanned boolean not null default false;
+alter table public.cards add column if not exists waiting_on uuid references public.people (id) on delete set null;
+alter table public.cards add column if not exists block_note text not null default '';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'cards_planning_shape') then
+    alter table public.cards add constraint cards_planning_shape check (
+      horizon in ('next', 'later') and (size is null or size in ('s', 'm', 'l')) and length(block_note) <= 200);
+  end if;
+end $$;
+
+-- What this cycle is for, in one to three short lines (the PM writes it)
+alter table public.board add column if not exists cycle_goals text not null default '';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'board_goals_length') then
+    alter table public.board add constraint board_goals_length check (length(cycle_goals) <= 600);
+  end if;
+end $$;
+
+-- The flow: Backlog > To do > Doing > QA Test ('review') > Security > Done.
+-- Security is the cyber-security sign-off before a card is done.
+alter table public.cards drop constraint if exists cards_status_check;
+alter table public.cards add constraint cards_status_check
+  check (status in ('backlog', 'todo', 'doing', 'review', 'security', 'done'));
+
+-- Security reviewers: the people who sign off the Security step (the PM ticks them in Team)
+alter table public.people add column if not exists security boolean not null default false;
+
+-- Who is away, and until when (people set this themselves in Settings)
+alter table public.people add column if not exists away_until date;
+
+-- Descriptions hold formatted text and image links now: allow 20,000 characters on older boards too.
+alter table public.cards drop constraint if exists cards_notes_check;
+alter table public.cards add constraint cards_notes_check check (length(notes) <= 20000);
+
+-- Comments on a card. Formatted like the description. "mentions" lists the people @mentioned,
+-- checked against the roster by the database; they get a notification.
+create table if not exists public.card_comments (
+  id uuid primary key default gen_random_uuid(),
+  card_id uuid not null references public.cards (id) on delete cascade,
+  author_id uuid references public.people (id) on delete set null,
+  body text not null check (length(trim(body)) between 1 and 10000),
+  mentions uuid[] not null default '{}',
+  created_at timestamptz not null default now()
+);
+create index if not exists card_comments_card_idx on public.card_comments (card_id, created_at);
 
 create table if not exists public.card_events (
   id bigint generated always as identity primary key,
@@ -197,7 +271,7 @@ create index if not exists notifications_recipient_idx on public.notifications (
 create table if not exists public.notify_settings (
   id int primary key default 1 check (id = 1),
   emails_enabled boolean not null default false,
-  provider text not null default 'resend' check (provider in ('resend', 'brevo', 'log')),
+  provider text not null default 'claude' check (provider in ('claude', 'resend', 'brevo', 'log')),
   from_name text not null default 'Nudge Board',
   from_email text not null default '',
   app_url text not null default '',
@@ -212,6 +286,11 @@ create table if not exists public.notify_settings (
   updated_at timestamptz not null default now()
 );
 insert into public.notify_settings (id) values (1) on conflict do nothing;
+-- Boards made before Claude could send email: allow the 'claude' provider too.
+alter table public.notify_settings drop constraint if exists notify_settings_provider_check;
+alter table public.notify_settings add constraint notify_settings_provider_check
+  check (provider in ('claude', 'resend', 'brevo', 'log'));
+alter table public.notify_settings alter column provider set default 'claude';
 
 -- Private tables: no browser access at all.
 create table if not exists private.notify_queue (
@@ -278,21 +357,61 @@ create table if not exists private.kv (
   value text
 );
 
+-- Emails waiting for Claude to send them (provider 'claude'). A scheduled task in the PM's
+-- Claude app picks these up with the Claude key and sends them through their email connector.
+create table if not exists private.outbox (
+  id uuid primary key default gen_random_uuid(),
+  idem text not null,
+  to_email text not null,
+  to_name text not null default '',
+  subject text not null,
+  html text not null,
+  body_text text not null,
+  status text not null default 'pending' check (status in ('pending', 'taken', 'sent', 'failed')),
+  detail text,
+  created_at timestamptz not null default now(),
+  taken_at timestamptz,
+  finished_at timestamptz
+);
+create unique index if not exists outbox_idem_key on private.outbox (idem);
+create index if not exists outbox_status_idx on private.outbox (status, created_at);
+
+-- The Claude key: a long random secret that lets the Claude task read the outbox and nothing else.
+insert into private.kv (key, value)
+values ('claude_key', replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''))
+on conflict (key) do nothing;
+
+-- The GitHub key: lets the board's GitHub workflow move cards, and nothing else.
+insert into private.kv (key, value)
+values ('github_key', replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''))
+on conflict (key) do nothing;
+
+-- Boards that never got Resend or Brevo working: switch them to Claude.
+update public.notify_settings set provider = 'claude'
+ where provider in ('resend', 'brevo')
+   and not exists (select 1 from private.email_log where status = 'sent' and provider in ('resend', 'brevo'));
+
 -- ---------------------------------------------------------------------
--- Who is signed in? Matches the confirmed sign-in email to the roster.
+-- Who is signed in?
+--   * a password account that was claimed with the person's join code, or
+--   * an email-code or Google sign-in whose confirmed email is on the roster.
 -- ---------------------------------------------------------------------
 
 create or replace function private.me() returns uuid
 language sql stable security definer set search_path = '' as $$
   select p.id
     from public.people p
-    join auth.users u on lower(u.email) = lower(p.email)
-   where u.id = (select auth.uid())
-     and u.email_confirmed_at is not null
-     and p.active
-     -- A session that came from a password sign-in is not trusted: someone could have
-     -- pre-registered a password for an email before its owner first signed in.
-     and position('"password"' in coalesce((select auth.jwt()) -> 'amr', '[]'::jsonb)::text) = 0
+   where p.active
+     and (p.user_id = (select auth.uid())
+          or exists (
+            select 1 from auth.users u
+             where u.id = (select auth.uid())
+               and lower(u.email) = lower(p.email)
+               and u.email_confirmed_at is not null
+               -- A password session only counts through the join code above: anyone can
+               -- register a password for an email they do not own.
+               and position('"password"' in coalesce((select auth.jwt()) -> 'amr', '[]'::jsonb)::text) = 0))
+   order by (p.user_id = (select auth.uid())) desc nulls last
    limit 1
 $$;
 
@@ -327,6 +446,15 @@ begin
   if not private.valid_tz(new.timezone) then
     raise exception 'Unknown time zone: %', new.timezone using errcode = '22023';
   end if;
+  if tg_op = 'INSERT' and new.user_id is null and new.join_code is null then
+    new.join_code := private.new_code();
+  end if;
+  -- A new email means a new person may be behind it: drop the old password account and issue a fresh code.
+  if tg_op = 'UPDATE' and new.email is distinct from old.email then
+    new.user_id := null;
+    new.join_code := private.new_code();
+    new.join_tries := 0;
+  end if;
   if tg_op = 'UPDATE' then
     if not private.is_system() then
       new.mute_token := old.mute_token;
@@ -346,6 +474,12 @@ drop trigger if exists people_guard_trg on public.people;
 create trigger people_guard_trg before insert or update or delete on public.people
   for each row execute function private.people_guard();
 
+-- People added before password sign-in existed get a join code now.
+update public.people set join_code = private.new_code() where user_id is null and join_code is null;
+-- Codes saved with a dash by an earlier version: store them plain, and forgive the failed tries that caused.
+update public.people set join_code = private.clean_code(join_code), join_tries = 0
+ where join_code is not null and join_code <> private.clean_code(join_code);
+
 create or replace function private.board_guard() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
@@ -361,6 +495,27 @@ create trigger board_guard_trg before insert or update on public.board
 -- ---------------------------------------------------------------------
 -- Cards: server-controlled fields and who may assign
 -- ---------------------------------------------------------------------
+
+-- Has the current cycle passed its first day? (Work added on day one counts as planned.)
+create or replace function private.mid_cycle() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select (private.now_utc() at time zone b.timezone)::date > b.cycle_start from public.board b where b.id = 1
+$$;
+
+-- Planning fields that follow from the rest of the card
+create or replace function private.tidy_planning(c public.cards) returns public.cards
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  c.horizon := coalesce(c.horizon, 'later');
+  c.block_note := trim(coalesce(c.block_note, ''));
+  if not c.blocked then
+    c.waiting_on := null;
+    c.block_note := '';
+  elsif c.waiting_on is not null and not exists (select 1 from public.people where id = c.waiting_on and active) then
+    raise exception 'A blocked card can only wait on someone active on the team' using errcode = '23514';
+  end if;
+  return c;
+end $$;
 
 create or replace function private.cards_before() returns trigger
 language plpgsql security definer set search_path = '' as $$
@@ -389,6 +544,8 @@ begin
     end if;
     new.done_at := case when new.status = 'done' then coalesce(new.done_at, now()) else null end;
     if new.status = 'done' then new.blocked := false; end if;
+    new.unplanned := new.status <> 'backlog' and private.mid_cycle();
+    new := private.tidy_planning(new);
     return new;
   end if;
 
@@ -419,7 +576,12 @@ begin
     new.done_at := case when new.status = 'done' then now() else null end;
     if new.status = 'done' then new.blocked := false; end if;
     if new.status = 'backlog' then new.rolled := 0; end if;
+    -- Joining the cycle after day one makes a card unplanned; going back to the backlog clears it
+    if new.status = 'backlog' then new.unplanned := false;
+    elsif old.status = 'backlog' then new.unplanned := private.mid_cycle();
+    end if;
   end if;
+  new := private.tidy_planning(new);
   return new;
 end $$;
 
@@ -454,10 +616,15 @@ begin
 
   msg := case p_reason
     when 'assigned'  then format('%s gave you %s: %s', p_actor_name, ckey, p_card.title)
-    when 'review'    then format('%s moved %s to Review. It''s with you now: %s', p_actor_name, ckey, p_card.title)
+    when 'review'    then format('%s moved %s to QA Test. It''s with you now: %s', p_actor_name, ckey, p_card.title)
+    when 'security'  then format('%s moved %s to Security for your sign-off: %s', p_actor_name, ckey, p_card.title)
     when 'sent_back' then format('%s sent %s back to %s: %s', p_actor_name, ckey, private.status_name(p_to), p_card.title)
     when 'blocked'   then format('%s marked %s as blocked: %s', p_actor_name, ckey, p_card.title)
     when 'unblocked' then format('%s unblocked %s: %s', p_actor_name, ckey, p_card.title)
+    when 'mentioned' then format('%s mentioned you on %s: %s', p_actor_name, ckey, p_card.title)
+    when 'commented' then format('%s commented on %s: %s', p_actor_name, ckey, p_card.title)
+    when 'waiting_on' then format('%s is blocked on %s and waiting on you%s: %s', p_actor_name, ckey,
+                                  case when p_card.block_note <> '' then ' (' || p_card.block_note || ')' else '' end, p_card.title)
     else case when p_from is not null
            then format('%s moved %s from %s to %s: %s', p_actor_name, ckey, private.status_name(p_from), private.status_name(p_to), p_card.title)
            else format('%s moved %s to %s: %s', p_actor_name, ckey, private.status_name(p_to), p_card.title) end
@@ -465,7 +632,7 @@ begin
   insert into public.notifications (recipient_id, card_id, kind, message, created_at)
   values (p_recipient, p_card.id, p_kind, msg, now_ts);
 
-  if per.notify_mode = 'off' or p_reason = 'unblocked' then return; end if;
+  if per.notify_mode = 'off' or p_reason in ('unblocked', 'commented') then return; end if;
 
   deliv := case
     when p_kind = 'update' then case when per.pm_instant then 'instant' else 'digest' end
@@ -522,7 +689,8 @@ begin
   if actor is not null then
     select name into actor_name from public.people where id = actor;
   end if;
-  actor_name := coalesce(actor_name, 'Someone');
+  -- Moves made by the GitHub workflow name the GitHub user
+  actor_name := coalesce(actor_name, nullif(current_setting('nb.actor_name', true), ''), 'Someone');
 
   if tg_op = 'INSERT' then
     insert into public.card_events (card_id, card_key, title, from_status, to_status, actor_id, at)
@@ -535,6 +703,9 @@ begin
     end if;
     if new.assignee_id is not null and new.assignee_id is distinct from actor and new.status <> 'done' then
       perform private.notify(new.assignee_id, new, 'turn', 'assigned', actor_name);
+    end if;
+    if new.blocked and new.waiting_on is not null and new.waiting_on is distinct from actor then
+      perform private.notify(new.waiting_on, new, 'turn', 'waiting_on', actor_name);
     end if;
     return new;
   end if;
@@ -552,7 +723,7 @@ begin
       else null end;
     reason := case
       when new.status = 'review' then 'review'
-      when old.status = 'review' and new.status in ('todo', 'doing') then 'sent_back'
+      when old.status in ('review', 'security') and new.status in ('todo', 'doing') then 'sent_back'
       else 'moved' end;
     if owner is not null and owner is distinct from actor then
       if new.status in ('todo', 'doing') and old.status in ('todo', 'doing') then
@@ -569,11 +740,18 @@ begin
       perform private.notify(new.assignee_id, new, 'update', 'moved', actor_name, old.status, new.status);
     end if;
 
+    -- Security: every security reviewer is asked to sign it off
+    if new.status = 'security' then
+      for pm_id in select id from public.people where security and active and id is distinct from actor loop
+        perform private.notify(pm_id, new, 'turn', 'security', actor_name, old.status, new.status);
+      end loop;
+    end if;
+
     -- PMs get a digest line for every move (never for their own moves)
     for pm_id in
       select id from public.people
        where role = 'pm' and active and id is distinct from actor and id is distinct from owner
-         and id is distinct from new.assignee_id
+         and id is distinct from new.assignee_id and not (new.status = 'security' and security)
     loop
       perform private.notify(pm_id, new, 'update', 'moved', actor_name, old.status, new.status);
     end loop;
@@ -599,6 +777,12 @@ begin
     end loop;
   end if;
 
+  -- "Blocked by @person": the person who can unblock it hears about it straight away
+  if new.blocked and new.waiting_on is not null and new.waiting_on is distinct from actor
+     and (not old.blocked or new.waiting_on is distinct from old.waiting_on) then
+    perform private.notify(new.waiting_on, new, 'turn', 'waiting_on', actor_name);
+  end if;
+
   return new;
 end $$;
 
@@ -617,6 +801,54 @@ create trigger cards_after_trg after insert or update on public.cards
   for each row execute function private.cards_after();
 
 -- ---------------------------------------------------------------------
+-- Comments: who wrote it is decided here, and mentions are checked against the roster
+-- ---------------------------------------------------------------------
+
+create or replace function private.comments_before() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.is_system() then
+    new.author_id := private.me();
+    new.created_at := private.now_utc();
+  end if;
+  new.body := trim(new.body);
+  -- only active teammates, never the author, each once, at most 20
+  new.mentions := coalesce((select array_agg(id) from (
+      select p.id from public.people p
+       where p.id = any(coalesce(new.mentions, '{}')) and p.active and p.id is distinct from new.author_id
+       limit 20) m), '{}');
+  return new;
+end $$;
+drop trigger if exists comments_before_trg on public.card_comments;
+create trigger comments_before_trg before insert on public.card_comments
+  for each row execute function private.comments_before();
+
+-- Mentioned people hear about it (bell, desktop, and email like a task that needs them).
+-- The card's owner sees new comments in the bell.
+create or replace function private.comments_after() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare
+  c public.cards;
+  actor_name text;
+  pid uuid;
+begin
+  select * into c from public.cards where id = new.card_id;
+  if not found then return null; end if;
+  actor_name := coalesce((select name from public.people where id = new.author_id), 'Someone');
+  foreach pid in array new.mentions loop
+    perform private.notify(pid, c, 'turn', 'mentioned', actor_name);
+  end loop;
+  if c.assignee_id is not null and c.assignee_id is distinct from new.author_id
+     and not (c.assignee_id = any(new.mentions)) then
+    perform private.notify(c.assignee_id, c, 'update', 'commented', actor_name);
+  end if;
+  return null;
+end $$;
+drop trigger if exists comments_after_trg on public.card_comments;
+create trigger comments_after_trg after insert on public.card_comments
+  for each row execute function private.comments_after();
+
+-- ---------------------------------------------------------------------
 -- Sending email over HTTPS (Resend or Brevo). Needs pg_net and Vault.
 -- ---------------------------------------------------------------------
 
@@ -633,6 +865,18 @@ begin
   if s.provider = 'log' then
     return null;
   end if;
+  if s.provider = 'claude' then
+    if s.app_url = '' then
+      raise exception 'Set the board web address in the Team panel first (it makes the buttons and the pause links work).';
+    end if;
+    -- Claude sends it later. A repeat of the same message (same idem) is ignored.
+    insert into private.outbox (idem, to_email, to_name, subject, html, body_text, created_at)
+    values (p_idem, p_to_email, coalesce(p_to_name, ''), p_subject, p_html, p_text, private.now_utc())
+    on conflict (idem) do nothing;
+    return null;
+  end if;
+
+  -- Resend and Brevo, sent straight from the database. Not used while the provider is 'claude'.
   select decrypted_secret into api_key from vault.decrypted_secrets where name = 'email_api_key' limit 1;
   if api_key is null or api_key = '' then
     raise exception 'No email API key yet. Save it in Vault under the name email_api_key (see docs/SETUP.md).';
@@ -751,12 +995,24 @@ begin
         line_txt := line_txt || ' It''s waiting in ' || st || ' whenever you''re ready.';
       when 'review' then
         subj := 'Your turn: ' || left(t, 60);
-        line := format('%s moved <b>%s</b> &ldquo;%s&rdquo; to Review. It''s with you now, whenever you''re ready.', private.h(actor), private.h(k), private.h(t));
-        line_txt := format('%s moved %s "%s" to Review. It''s with you now, whenever you''re ready.', actor, k, t);
+        line := format('%s moved <b>%s</b> &ldquo;%s&rdquo; to QA Test. It''s with you now, whenever you''re ready.', private.h(actor), private.h(k), private.h(t));
+        line_txt := format('%s moved %s "%s" to QA Test. It''s with you now, whenever you''re ready.', actor, k, t);
+      when 'security' then
+        subj := 'Security sign-off: ' || left(t, 60);
+        line := format('%s moved <b>%s</b> &ldquo;%s&rdquo; to Security. It needs your sign-off before it is done.', private.h(actor), private.h(k), private.h(t));
+        line_txt := format('%s moved %s "%s" to Security. It needs your sign-off before it is done.', actor, k, t);
       when 'sent_back' then
         subj := 'Back with you: ' || left(t, 60);
         line := format('%s sent <b>%s</b> &ldquo;%s&rdquo; back to %s. Have a look when you can.', private.h(actor), private.h(k), private.h(t), private.h(st));
         line_txt := format('%s sent %s "%s" back to %s. Have a look when you can.', actor, k, t, st);
+      when 'waiting_on' then
+        subj := 'Waiting on you: ' || left(t, 60);
+        line := format('%s is blocked on <b>%s</b> &ldquo;%s&rdquo; and needs you to move it forward.', private.h(actor), private.h(k), private.h(t));
+        line_txt := format('%s is blocked on %s "%s" and needs you to move it forward.', actor, k, t);
+      when 'mentioned' then
+        subj := 'Mentioned: ' || left(t, 60);
+        line := format('%s mentioned you in a comment on <b>%s</b> &ldquo;%s&rdquo;.', private.h(actor), private.h(k), private.h(t));
+        line_txt := format('%s mentioned you in a comment on %s "%s".', actor, k, t);
       when 'blocked' then
         subj := 'Blocked: ' || left(t, 60);
         line := format('%s marked <b>%s</b> &ldquo;%s&rdquo; as blocked. It might be worth a quick word.', private.h(actor), private.h(k), private.h(t));
@@ -784,9 +1040,12 @@ begin
     actor := coalesce(it ->> 'actor', 'Someone');
     line := case it ->> 'reason'
       when 'assigned' then 'assigned to you by ' || actor
-      when 'review' then 'ready for your review'
+      when 'review' then 'ready for QA'
+      when 'security' then 'ready for security sign-off'
       when 'sent_back' then 'sent back to ' || st
       when 'blocked' then 'marked blocked by ' || actor
+      when 'mentioned' then 'mentioned by ' || actor
+      when 'waiting_on' then 'waiting on you, from ' || actor
       else 'now in ' || st end;
     body := body || format('<li><b>%s</b> %s <span style="color:#6b7280">(%s)</span></li>',
                            private.h(it ->> 'key'), private.h(t), private.h(line));
@@ -823,9 +1082,12 @@ begin
       it := waiting -> i;
       line := case it ->> 'reason'
         when 'assigned' then 'assigned to you by ' || coalesce(it ->> 'actor', 'Someone')
-        when 'review' then 'ready for your review'
+        when 'review' then 'ready for QA'
+        when 'security' then 'ready for security sign-off'
         when 'sent_back' then 'sent back to ' || private.status_name(it ->> 'status')
         when 'blocked' then 'marked blocked'
+        when 'mentioned' then 'mentioned by ' || coalesce(it ->> 'actor', 'Someone')
+        when 'waiting_on' then 'waiting on you, from ' || coalesce(it ->> 'actor', 'Someone')
         else 'now in ' || private.status_name(it ->> 'status') end;
       body := body || format('<li><b>%s</b> %s <span style="color:#6b7280">(%s)</span></li>',
         private.h(it ->> 'key'), private.h(private.show_title(it ->> 'title', s)), private.h(line));
@@ -920,12 +1182,16 @@ begin
                           where e.card_id = c.id and e.actor_id = q.recipient_id and e.at >= q.first_event_at);
     when 'review' then
       return c.status = 'review' and private.reviewer_for(c, b) = q.recipient_id;
+    when 'security' then
+      return c.status = 'security' and exists (select 1 from public.people where id = q.recipient_id and security and active);
     when 'sent_back' then
       return c.assignee_id = q.recipient_id and c.status in ('todo', 'doing');
     when 'moved' then
       return c.assignee_id = q.recipient_id and c.status = coalesce(q.payload ->> 'to', c.status);
     when 'blocked' then
       return c.blocked;
+    when 'waiting_on' then
+      return c.blocked and c.waiting_on = q.recipient_id;
     else
       return true;
   end case;
@@ -1117,7 +1383,7 @@ begin
       insert into private.email_log (id, recipient_id, to_email, kind, subject, provider, request_id, status, detail, created_at, finished_at)
       values (log_id, p.id, p.email, 'instant', rendered ->> 'subject', s.provider, rid,
               case when rid is null then 'sent' else 'sending' end,
-              case when rid is null then 'Logged only (provider is set to log)' end, now_ts,
+              case when rid is null then (case s.provider when 'claude' then 'Waiting for Claude to send it' else 'Logged only (provider is set to log)' end) end, now_ts,
               case when rid is null then now_ts end);
       update private.notify_queue
          set status = case when rid is null then 'sent' else 'sending' end, email_id = log_id,
@@ -1251,7 +1517,7 @@ begin
       insert into private.email_log (id, recipient_id, to_email, kind, slot, subject, provider, request_id, status, detail, created_at, finished_at)
       values (log_id, p.id, p.email, 'digest', v_slot, rendered ->> 'subject', s.provider, rid,
               case when rid is null then 'sent' else 'sending' end,
-              case when rid is null then 'Logged only (provider is set to log)' end, now_ts,
+              case when rid is null then (case s.provider when 'claude' then 'Waiting for Claude to send it' else 'Logged only (provider is set to log)' end) end, now_ts,
               case when rid is null then now_ts end);
       if ids is not null then
         update private.notify_queue
@@ -1281,10 +1547,16 @@ begin
   -- Digest items older than five days are stale news
   update private.notify_queue set status = 'digested', finished_at = now_ts
    where status = 'pending' and delivery = 'digest' and created_at < now_ts - interval '120 hours';
+  -- Claude's outbox: late news is noise, and a pick-up with no answer is not retried (it may have gone out)
+  update private.outbox set status = 'failed', finished_at = now_ts, detail = 'Claude did not pick it up within a day'
+   where status = 'pending' and created_at < now_ts - interval '24 hours';
+  update private.outbox set status = 'failed', finished_at = now_ts, detail = 'Claude picked it up but did not say it was sent'
+   where status = 'taken' and taken_at < now_ts - interval '2 hours';
   -- Once a day: clean up
   if coalesce((select value from private.kv where key = 'housekeeping_day'), '') <> day then
     delete from private.notify_queue where status in ('sent', 'cancelled', 'digested', 'failed') and coalesce(finished_at, created_at) < now_ts - interval '30 days';
     delete from private.email_log where created_at < now_ts - interval '30 days';
+    delete from private.outbox where status in ('sent', 'failed') and coalesce(finished_at, created_at) < now_ts - interval '30 days';
     delete from private.digest_slots where done_at < now_ts - interval '7 days';
     delete from private.digest_mentions where last_at < now_ts - interval '14 days';
     delete from public.notifications where created_at < now_ts - interval '60 days';
@@ -1347,7 +1619,7 @@ begin
   newstart := case when p_force then today else b.cycle_start + k * b.cycle_days end;
 
   select count(*) into n_done from public.cards where status = 'done' and archived_at is null;
-  select count(*) into n_open from public.cards where status in ('todo', 'doing', 'review') and archived_at is null;
+  select count(*) into n_open from public.cards where status in ('todo', 'doing', 'review', 'security') and archived_at is null;
   insert into public.cycle_history (n, start_date, end_date, done, total)
   values (b.cycle_n, b.cycle_start, least(b.cycle_start + b.cycle_days - 1, newstart - 1), n_done, n_done + n_open)
   on conflict (n) do nothing;
@@ -1355,7 +1627,7 @@ begin
 
   perform set_config('nb.system', '1', true);
   update public.cards set archived_at = now() where status = 'done' and archived_at is null;
-  update public.cards set rolled = rolled + 1 where status in ('todo', 'doing', 'review') and archived_at is null;
+  update public.cards set rolled = rolled + 1, unplanned = false where status in ('todo', 'doing', 'review', 'security') and archived_at is null;
   update public.board set cycle_n = b.cycle_n + k, cycle_start = newstart, updated_at = now() where id = 1;
   perform set_config('nb.system', prev_sys, true);
   return true;
@@ -1368,7 +1640,7 @@ end $$;
 create or replace function public.whoami() returns jsonb
 language sql stable security definer set search_path = '' as $$
   select to_jsonb(x) from (
-    select p.id, p.name, p.email, p.role, p.timezone, p.notify_mode, p.pm_instant, p.muted_until
+    select p.id, p.name, p.email, p.role, p.timezone, p.notify_mode, p.pm_instant, p.muted_until, p.away_until, p.security
       from public.people p where p.id = private.me()
   ) x
 $$;
@@ -1446,9 +1718,11 @@ declare
   sent_today int;
   last_row private.email_log;
   has_key boolean;
+  waiting int;
 begin
   if not private.is_pm() then raise exception 'Only the project manager can do this' using errcode = '42501'; end if;
   select * into s from public.notify_settings where id = 1;
+  select count(*) into waiting from private.outbox where status in ('pending', 'taken');
   select count(*) into sent_today from private.email_log
    where status in ('sending', 'sent') and created_at >= date_trunc('day', private.now_utc() at time zone 'UTC') at time zone 'UTC';
   select * into last_row from private.email_log order by created_at desc limit 1;
@@ -1460,7 +1734,10 @@ begin
     'enabled', s.emails_enabled, 'provider', s.provider, 'has_key', has_key,
     'sent_today', sent_today, 'daily_cap', s.daily_cap,
     'last_status', last_row.status, 'last_detail', last_row.detail, 'last_at', last_row.created_at,
-    'last_kind', last_row.kind, 'last_to', last_row.to_email);
+    'last_kind', last_row.kind, 'last_to', last_row.to_email,
+    'claude_key', (select value from private.kv where key = 'claude_key'),
+    'claude_seen_at', (select value from private.kv where key = 'claude_seen_at'),
+    'outbox_waiting', waiting);
 end $$;
 
 create or replace function public.send_test_email() returns jsonb
@@ -1487,10 +1764,11 @@ begin
     insert into private.email_log (id, recipient_id, to_email, kind, subject, provider, request_id, status, detail, created_at, finished_at)
     values (log_id, per.id, per.email, 'test', 'Test from Nudge Board', s.provider, rid,
             case when rid is null then 'sent' else 'sending' end,
-            case when rid is null then 'Logged only (provider is set to log)' end, now_ts,
+            case when rid is null then (case s.provider when 'claude' then 'Waiting for Claude to send it' else 'Logged only (provider is set to log)' end) end, now_ts,
             case when rid is null then now_ts end);
     return jsonb_build_object('ok', true, 'message',
-      case when rid is null then 'Provider is set to log, so nothing was sent.' else 'Test email sent. It should arrive within a minute.' end);
+      case when rid is null and s.provider = 'claude' then 'Test email is waiting for Claude. It goes out the next time your Claude task runs.'
+           when rid is null then 'Provider is set to log, so nothing was sent.' else 'Test email sent. It should arrive within a minute.' end);
   exception when others then
     insert into private.email_log (id, recipient_id, to_email, kind, subject, provider, status, detail, created_at, finished_at)
     values (log_id, per.id, per.email, 'test', 'Test from Nudge Board', s.provider, 'failed', left(sqlerrm, 400), now_ts, now_ts);
@@ -1515,7 +1793,221 @@ begin
   update public.board set name = p_board_name, card_prefix = upper(p_prefix), timezone = p_tz,
     cycle_start = (private.now_utc() at time zone p_tz)::date, updated_at = now() where id = 1;
   perform set_config('nb.system', prev_sys, true);
-  return 'Done. ' || p_email || ' is now the project manager. Sign in with that email.';
+  return 'Done. ' || p_email || ' is now the project manager. Your join code is '
+    || (select substr(private.clean_code(join_code), 1, 4) || '-' || substr(private.clean_code(join_code), 5) from public.people where email = lower(trim(p_email)))
+    || '. Open the board, choose "First time here", and use it to set your password.';
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Password sign-in with a join code (no email needed)
+--
+-- The PM adds a person and shares their join code. On the board the person enters
+-- email + code + a new password:
+--   1. start_join checks the code and clears any old sign-in account for that email
+--      (a forgotten password, or someone who registered the email before them).
+--   2. the app creates the password account (Supabase sign-up, "Confirm email" off).
+--   3. finish_join, signed in with that account, checks the code again and links it.
+-- Ten wrong codes lock that code until the PM makes a new one.
+-- ---------------------------------------------------------------------
+
+create or replace function private.check_join_code(per public.people, p_code text) returns text
+language plpgsql security definer set search_path = '' as $$
+declare
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
+begin
+  if per.id is null or per.join_code is null then return 'code'; end if;
+  if per.join_tries >= 10 then return 'locked'; end if;
+  -- Both sides tidied: dashes, spaces and case never matter
+  if private.clean_code(p_code) = private.clean_code(per.join_code) then return 'ok'; end if;
+  perform set_config('nb.system', '1', true);
+  update public.people set join_tries = join_tries + 1 where id = per.id;
+  perform set_config('nb.system', prev_sys, true);
+  return 'code';
+end $$;
+
+create or replace function public.start_join(p_email text, p_code text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  per public.people;
+  r text;
+begin
+  perform pg_advisory_xact_lock(hashtext('nudge.join'));
+  select * into per from public.people where email = lower(trim(coalesce(p_email, ''))) and active;
+  r := private.check_join_code(per, p_code);
+  if r <> 'ok' then return jsonb_build_object('ok', false, 'reason', r); end if;
+  begin
+    delete from auth.users where lower(email) = per.email;
+  exception when insufficient_privilege then
+    return jsonb_build_object('ok', false, 'reason', 'server',
+      'message', 'The database could not reset the old sign-in for this email. Ask your project manager to delete it in Supabase (Authentication > Users).');
+  end;
+  return jsonb_build_object('ok', true);
+end $$;
+
+create or replace function public.finish_join(p_code text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  uid uuid := (select auth.uid());
+  per public.people;
+  r text;
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
+begin
+  if uid is null then raise exception 'Sign in first' using errcode = '42501'; end if;
+  perform pg_advisory_xact_lock(hashtext('nudge.join'));
+  select p.* into per from public.people p join auth.users u on lower(u.email) = p.email
+   where u.id = uid and p.active;
+  r := private.check_join_code(per, p_code);
+  if r <> 'ok' then return jsonb_build_object('ok', false, 'reason', r); end if;
+  perform set_config('nb.system', '1', true);
+  update public.people set user_id = null where user_id = uid;
+  update public.people set user_id = uid, join_code = null, join_tries = 0 where id = per.id;
+  perform set_config('nb.system', prev_sys, true);
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- PM: a fresh code for someone who forgot their password (or whose account should be cut off).
+-- Their current password stops working for the board straight away.
+create or replace function public.reset_join_code(p_person uuid) returns text
+language plpgsql security definer set search_path = '' as $$
+declare
+  code text;
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
+begin
+  if not private.is_pm() then raise exception 'Only the project manager can do this' using errcode = '42501'; end if;
+  perform set_config('nb.system', '1', true);
+  update public.people set user_id = null, join_code = private.new_code(), join_tries = 0
+   where id = p_person returning join_code into code;
+  perform set_config('nb.system', prev_sys, true);
+  if code is null then raise exception 'That person is not on the team' using errcode = '22023'; end if;
+  return code;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Who's away: anyone can say they are away until a date (or clear it)
+-- ---------------------------------------------------------------------
+
+create or replace function public.set_my_away(p_until date) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  me uuid := private.me();
+  today date;
+begin
+  if me is null then raise exception 'Not on the team' using errcode = '42501'; end if;
+  select (private.now_utc() at time zone timezone)::date into today from public.people where id = me;
+  if p_until is not null and (p_until < today or p_until > today + 365) then
+    raise exception 'Pick a date from today up to a year ahead' using errcode = '22023';
+  end if;
+  update public.people set away_until = p_until where id = me;
+  return public.whoami();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- GitHub: the workflow in your code repository sends commit messages, branch names and pull
+-- request titles here. Cards mentioned in them move forward on their own (never backwards):
+--   a merged pull request                                        -> QA Test
+--   any other mention: a push, a branch chk-12-..., "Fixes CHK-12",
+--   or an opened pull request                                    -> Doing
+-- People move cards on from QA Test (to Security, then Done) themselves.
+-- ---------------------------------------------------------------------
+
+create or replace function public.github_sync(p_key text, p_events jsonb) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  rank constant jsonb := '{"backlog": 0, "todo": 1, "doing": 2, "review": 3, "security": 4, "done": 5}';
+  prefix text := (select card_prefix from public.board where id = 1);
+  ev jsonb;
+  kind text;
+  txt text;
+  hit text[];
+  card_num int;
+  target text;
+  c public.cards;
+  moved jsonb := '[]';
+  prev_sys text := coalesce(current_setting('nb.system', true), '');
+  prev_actor text := coalesce(current_setting('nb.actor_name', true), '');
+begin
+  if coalesce(p_key, '') = '' or p_key is distinct from (select value from private.kv where key = 'github_key') then
+    raise exception 'Wrong GitHub key' using errcode = '42501';
+  end if;
+  if jsonb_typeof(p_events) is distinct from 'array' or jsonb_array_length(p_events) > 200 then
+    raise exception 'Send a list of at most 200 events' using errcode = '22023';
+  end if;
+  insert into private.kv (key, value) values ('github_seen_at', private.now_utc()::text)
+    on conflict (key) do update set value = excluded.value;
+
+  for ev in select * from jsonb_array_elements(p_events) loop
+    kind := coalesce(ev ->> 'kind', 'commit');
+    continue when kind = 'pr_closed';            -- closed without merging: nothing to do
+    txt := left(coalesce(ev ->> 'text', ''), 5000);
+    for hit in select regexp_matches(txt, '(^|[^A-Za-z0-9])' || prefix || '[-_ ]?([0-9]+)', 'gi') loop
+      card_num := hit[2]::int;
+      target := case when kind = 'pr_merged' then 'review' else 'doing' end;
+      select * into c from public.cards where num = card_num and archived_at is null;
+      continue when not found or (rank ->> target)::int <= (rank ->> c.status)::int;
+      perform set_config('nb.system', '1', true);
+      perform set_config('nb.actor_name', left(coalesce(nullif(ev ->> 'actor', ''), 'GitHub'), 60) || ' (GitHub)', true);
+      update public.cards set status = target where id = c.id;
+      perform set_config('nb.system', prev_sys, true);
+      perform set_config('nb.actor_name', prev_actor, true);
+      moved := moved || jsonb_build_object('key', prefix || '-' || card_num, 'from', c.status, 'to', target);
+    end loop;
+  end loop;
+  return jsonb_build_object('moved', moved);
+end $$;
+
+-- PM: the GitHub key and when GitHub last reported in
+create or replace function public.github_status() returns jsonb
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.is_pm() then raise exception 'Only the project manager can do this' using errcode = '42501'; end if;
+  return jsonb_build_object(
+    'github_key', (select value from private.kv where key = 'github_key'),
+    'github_seen_at', (select value from private.kv where key = 'github_seen_at'));
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Claude's outbox. The Claude task calls these with the Claude key (shown to the PM in
+-- Team > Email). No sign-in: the key is the password, and it only reaches the outbox.
+-- ---------------------------------------------------------------------
+
+create or replace function private.claude_key_ok(p_key text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select coalesce(p_key, '') <> '' and p_key = (select value from private.kv where key = 'claude_key')
+$$;
+
+-- Hands over up to p_limit emails. Each is given out once; report back with claude_outbox_done.
+create or replace function public.claude_outbox_take(p_key text, p_limit int default 20) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  now_ts timestamptz := private.now_utc();
+  items jsonb;
+begin
+  if not private.claude_key_ok(p_key) then raise exception 'Wrong Claude key' using errcode = '42501'; end if;
+  insert into private.kv (key, value) values ('claude_seen_at', now_ts::text)
+    on conflict (key) do update set value = excluded.value;
+  with picked as (
+    select id from private.outbox where status = 'pending'
+     order by created_at limit greatest(1, least(coalesce(p_limit, 20), 50)) for update skip locked
+  ), upd as (
+    update private.outbox o set status = 'taken', taken_at = now_ts
+      from picked where o.id = picked.id
+    returning o.id, o.to_email, o.to_name, o.subject, o.body_text, o.html, o.created_at
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'to', to_email, 'name', to_name, 'subject', subject,
+                                               'text', body_text, 'html', html) order by created_at), '[]'::jsonb)
+    into items from upd;
+  return items;
+end $$;
+
+create or replace function public.claude_outbox_done(p_key text, p_id uuid, p_ok boolean, p_detail text default null) returns boolean
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.claude_key_ok(p_key) then raise exception 'Wrong Claude key' using errcode = '42501'; end if;
+  update private.outbox
+     set status = case when p_ok then 'sent' else 'failed' end, finished_at = private.now_utc(),
+         detail = left(coalesce(p_detail, case when p_ok then 'Sent by Claude' else 'Claude could not send it' end), 400)
+   where id = p_id and status = 'taken';
+  return found;
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -1565,6 +2057,15 @@ create policy cards_delete on public.cards for delete to authenticated
 
 drop policy if exists events_select on public.card_events;
 create policy events_select on public.card_events for select to authenticated using ((select private.is_member()));
+alter table public.card_comments enable row level security;
+drop policy if exists comments_select on public.card_comments;
+create policy comments_select on public.card_comments for select to authenticated using ((select private.is_member()));
+drop policy if exists comments_insert on public.card_comments;
+create policy comments_insert on public.card_comments for insert to authenticated with check ((select private.is_member()));
+drop policy if exists comments_delete on public.card_comments;
+create policy comments_delete on public.card_comments for delete to authenticated
+  using ((select private.is_pm()) or author_id = (select private.me()));
+
 drop policy if exists history_select on public.cycle_history;
 create policy history_select on public.cycle_history for select to authenticated using ((select private.is_member()));
 
@@ -1582,8 +2083,9 @@ create policy settings_update on public.notify_settings for update to authentica
   using ((select private.is_pm())) with check ((select private.is_pm()));
 
 -- What teammates may see about each other: names, never emails.
-create or replace view public.team with (security_invoker = false) as
-  select id, name, role, timezone, active
+drop view if exists public.team;
+create view public.team with (security_invoker = false) as
+  select id, name, role, timezone, active, away_until, security
     from public.people
    where (select private.is_member());
 
@@ -1598,15 +2100,17 @@ revoke all on all tables in schema private from public, anon, authenticated;
 revoke all on all functions in schema private from public, anon, authenticated;
 
 grant select on public.board, public.cards, public.card_events, public.cycle_history, public.notifications, public.team to authenticated;
-grant update (name, timezone, wip_limit, stale_days, cycle_days, default_reviewer_id, updated_at) on public.board to authenticated;
-grant select (id, name, email, role, timezone, notify_mode, pm_instant, active, muted_until, created_at) on public.people to authenticated;
-grant insert (name, email, role, timezone, notify_mode, pm_instant, active) on public.people to authenticated;
-grant update (name, email, role, timezone, notify_mode, pm_instant, active, muted_until) on public.people to authenticated;
+grant update (name, timezone, wip_limit, stale_days, cycle_days, default_reviewer_id, cycle_goals, updated_at) on public.board to authenticated;
+grant select (id, name, email, role, timezone, notify_mode, pm_instant, active, muted_until, created_at, user_id, join_code, away_until, security) on public.people to authenticated;
+grant insert (name, email, role, timezone, notify_mode, pm_instant, active, security) on public.people to authenticated;
+grant update (name, email, role, timezone, notify_mode, pm_instant, active, muted_until, away_until, security) on public.people to authenticated;
 grant delete on public.people to authenticated;
-grant insert (id, title, notes, status, prio, assignee_id, reviewer_id, due, tags, checks, blocked) on public.cards to authenticated;
-grant update (title, notes, status, prio, assignee_id, reviewer_id, due, tags, checks, blocked) on public.cards to authenticated;
+grant insert (id, title, notes, status, prio, assignee_id, reviewer_id, due, tags, checks, blocked, horizon, size, waiting_on, block_note) on public.cards to authenticated;
+grant update (title, notes, status, prio, assignee_id, reviewer_id, due, tags, checks, blocked, horizon, size, waiting_on, block_note) on public.cards to authenticated;
 grant delete on public.cards to authenticated;
 grant update (read_at) on public.notifications to authenticated;
+grant select, delete on public.card_comments to authenticated;
+grant insert (card_id, body, mentions) on public.card_comments to authenticated;
 grant select on public.notify_settings to authenticated;
 grant update (emails_enabled, provider, from_name, from_email, app_url, hide_titles, updated_at) on public.notify_settings to authenticated;
 
@@ -1624,6 +2128,14 @@ grant execute on function public.update_my_prefs(text, text, text) to authentica
 grant execute on function public.email_status() to authenticated;
 grant execute on function public.send_test_email() to authenticated;
 grant execute on function public.mute_by_token(uuid, text) to anon, authenticated;
+grant execute on function public.start_join(text, text) to anon, authenticated;
+grant execute on function public.finish_join(text) to authenticated;
+grant execute on function public.reset_join_code(uuid) to authenticated;
+grant execute on function public.claude_outbox_take(text, int) to anon;
+grant execute on function public.set_my_away(date) to authenticated;
+grant execute on function public.github_status() to authenticated;
+grant execute on function public.github_sync(text, jsonb) to anon;
+grant execute on function public.claude_outbox_done(text, uuid, boolean, text) to anon;
 
 -- ---------------------------------------------------------------------
 -- Live updates and schedules (Supabase only)
@@ -1664,7 +2176,25 @@ begin
   if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'notifications') then
     alter publication supabase_realtime add table public.notifications;
   end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'card_comments') then
+    alter publication supabase_realtime add table public.card_comments;
+  end if;
 end $$;
+
+-- Images in descriptions and comments: a private bucket. Only people on the team can see or add them;
+-- the person who added an image (or a PM) can remove it. 5 MB each.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('card-images', 'card-images', false, 5242880, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+on conflict (id) do nothing;
+drop policy if exists nudge_images_read on storage.objects;
+create policy nudge_images_read on storage.objects for select to authenticated
+  using (bucket_id = 'card-images' and (select private.is_member()));
+drop policy if exists nudge_images_add on storage.objects;
+create policy nudge_images_add on storage.objects for insert to authenticated
+  with check (bucket_id = 'card-images' and (select private.is_member()));
+drop policy if exists nudge_images_remove on storage.objects;
+create policy nudge_images_remove on storage.objects for delete to authenticated
+  using (bucket_id = 'card-images' and ((select private.is_pm()) or owner_id = (select auth.uid())::text));
 
 select cron.schedule('nudge-notify', '* * * * *', $cron$select private.run_notifications()$cron$);
 select cron.schedule('nudge-roll-cycle', '7 * * * *', $cron$select private.roll_cycle(false)$cron$);

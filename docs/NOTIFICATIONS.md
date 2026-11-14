@@ -2,19 +2,29 @@
 
 The aim: the person who has to act hears about it quickly, everyone else stays informed without being interrupted, and nobody gets a flood.
 
+Three channels:
+
+* **The bell** in the app, always.
+* **Desktop notifications**, per person and per browser (**Settings > Desktop notifications**): a system pop-up for anything that lands in the bell, while the board is open in a tab or window. "Things that need me" covers the rows below marked *Bell right away*; "Every update" adds the rest.
+* **Email**, decided by the rules below, then sent by the PM's Claude app from their own mailbox (docs/SETUP.md, step 10). "Sent" in this page means "handed to Claude": it goes out on Claude's next run, usually within 2 hrs. Anything Claude has not picked up within a day is dropped.
+
 ## Who is told what
 
 | Something happens | Who | How |
 | --- | --- | --- |
 | The PM assigns a card to Sam (in any column except Done) | Sam | Bell right away. One short email about 3 minutes later, unless Sam has already picked the card up. |
-| A card moves to **Review** (or is created there) | The card's reviewer, else the board's default reviewer, else the first active PM. Inactive people are skipped. | Bell right away. One short email about 3 minutes later. |
-| A reviewer sends a card back to To do or Doing | The card's owner | Same ("Back with you"). |
+| A card moves to **QA Test** (or is created there) | The card's reviewer, else the board's default reviewer, else the first active PM. Inactive people are skipped. | Bell right away. One short email about 3 minutes later. |
+| A card moves to **Security** | Everyone ticked as **Security reviewer** in Team | Bell right away. One short email about 3 minutes later ("Security sign-off: …"). |
+| A reviewer sends a card back to To do or Doing (from QA Test or Security) | The card's owner | Same ("Back with you"). |
 | Someone pulls Sam's card into To do or Doing from Backlog or Done, or reopens it | Sam | Same, because it has just landed in Sam's court. |
 | Someone else shuffles Sam's card between To do and Doing | Sam | Bell only, plus Sam's next morning digest. |
 | Someone else moves Sam's card anywhere else (for example to Done) | Sam | Bell, plus Sam's next morning digest. |
 | Any move by a member | Each PM | Bell. Included in the PM's digest. No instant email. |
 | A card is marked **Blocked** | Each PM | Bell. One short email about 3 minutes later. |
 | A card is unblocked | Each PM | Bell only. |
+| A card is marked blocked and waiting on Sam | Sam | Bell and desktop notification right away. One short email about 3 minutes later ("Waiting on you: …"), only while the card is still blocked on Sam. |
+| Someone @mentions Sam in a comment | Sam | Bell and desktop notification right away. One short email about 3 minutes later ("Mentioned: …"). |
+| Someone comments on Sam's card without mentioning Sam | Sam | Bell only. |
 
 Nobody is ever told about their own move.
 
@@ -33,11 +43,11 @@ These are built into the database, in `supabase/setup.sql`, and tested in `tests
 3. **One email per person.** Several cards that are due at once go out as one message ("3 cards are waiting for you").
 4. **At least 15 minutes between instant emails** to the same person. Anything held back merges into the next one.
 5. **At most 5 "your turn" emails per person per day.** The rest go into the next digest.
-6. **At most 80 emails a day for the whole team,** to stay under Resend's free 100. When it is reached, the rest wait for the next digest.
+6. **At most 80 emails a day for the whole team.** When it is reached, the rest wait for the next digest.
 7. **Working hours only.** Instant emails arrive 08:00 to 18:00 on weekdays in the recipient's own time zone, and digests come at 09:00, 13:00 and 17:00 on weekdays. Anything due outside those hours is held until the next work morning, not dropped.
 8. **Nothing repeats.** The same card in the same state never emails twice.
 9. **Failures are retried a little, then stop.** A rejected send is retried up to three times. Errors that will not get better by repeating (for example a rejected address) are not retried.
-10. **A kill switch.** In **Team > Email**, untick **Send emails** and instant emails and digests stop at once. The bell keeps working, and the test-email button still works.
+10. **A kill switch.** In **Team > Email**, untick **Send emails** and instant emails and digests stop at once. The bell and desktop notifications keep working, and the test-email button still works.
 
 ## What each person can choose
 
@@ -56,7 +66,7 @@ PMs who really want an email for every move can tick **Email me every move** nex
 
 Short, friendly, one action, and no card details beyond the title. Examples:
 
-* **Your turn: Apple Pay button**. "Sam moved CHK-4 "Apple Pay button" to Review. It's with you now, whenever you're ready."
+* **Your turn: Apple Pay button**. "Sam moved CHK-4 "Apple Pay button" to QA Test. It's with you now, whenever you're ready."
 * **New for you: Order receipt email**. "Peter gave you CHK-3 "Order receipt email". Due Fri Oct 2. It's waiting in To do whenever you're ready."
 * **Blocked: Load test payment API**. "Priya marked CHK-9 "Load test payment API" as blocked. It might be worth a quick word."
 
@@ -72,10 +82,11 @@ update public.notify_settings set debounce_min = 5;
 
 ## Where the numbers come from
 
-Waiting 3 minutes with a 10-minute cap is the same rule Jira Cloud documents for its own notifications, and Slack and Trello also bundle their emails instead of sending each change separately. The other numbers (15 minutes between emails, 5 "your turn" emails a day, 80 a day for the team, three PM digests) are this project's own choices, sized for a team of 3 to 15 people and Resend's free 100 emails a day. They are easy to change, and they are tested in `tests/sql.test.mjs`.
+Waiting 3 minutes with a 10-minute cap is the same rule Jira Cloud documents for its own notifications, and Slack and Trello also bundle their emails instead of sending each change separately. The other numbers (15 minutes between emails, 5 "your turn" emails a day, 80 a day for the team, three PM digests) are this project's own choices, sized for a team of 3 to 15 people. They are easy to change, and they are tested in `tests/sql.test.mjs`.
 
 ## Known limits
 
 * A digest can arrive close to an instant email for the same person, because the 15-minute gap only counts instant emails.
 * If a card bounces between columns the bell can show several lines for it. Emails are merged, the bell is not.
-* Brevo has no way to recognise a repeated request. If it accepts an email but its answer is lost, that email can be sent again (at most three times).
+* If Claude sends an email but its run stops before it reports back, that email is marked failed after two hours and is not sent again.
+* Desktop notifications only appear while the board is open in a tab or window (installing it as an app keeps a window around).

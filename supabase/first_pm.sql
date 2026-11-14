@@ -1,6 +1,7 @@
 -- Run this ONCE, after setup.sql. Change the five values, then press Run.
 -- It creates the first project manager and names your board.
--- You will sign in to the app with the email you put here.
+-- The result shows your join code. On the board, press "First time here", enter this email,
+-- the code and a new password. Lost it? Run supabase/join_codes.sql.
 
 select private.bootstrap(
   'Your Name',             -- your name, as your team should see it
