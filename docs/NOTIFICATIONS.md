@@ -6,7 +6,8 @@ Three channels:
 
 * **The bell** in the app, always.
 * **Desktop notifications**, per person and per browser (**Settings > Desktop notifications**): a system pop-up for anything that lands in the bell, while the board is open in a tab or window. "Things that need me" covers the rows below marked *Bell right away*; "Every update" adds the rest.
-* **Email**, decided by the rules below, then sent by the PM's Claude app from their own mailbox (docs/SETUP.md, step 10). "Sent" in this page means "handed to Claude": it goes out on Claude's next run, usually within 2 hrs. Anything Claude has not picked up within a day is dropped.
+* **Email**, decided by the rules below, then sent by the PM's Claude app from their own mailbox (docs/SETUP.md, step 10). "Sent" in this page means "handed to Claude": it goes out on Claude's next run. The task runs every 2 hours, Monday to Saturday, so an email can take up to 2 hours to arrive. Anything Claude has not picked up within a day is dropped.
+* **Cycle summaries** are not covered by these rules. A project manager sends one when they choose, from their own Gmail, and it goes out straight away (docs/SETUP.md, "Sending a cycle summary").
 
 ## Who is told what
 

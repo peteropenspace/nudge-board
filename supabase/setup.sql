@@ -254,6 +254,9 @@ create table if not exists public.cycle_history (
   total int not null
 );
 
+-- Each finished cycle keeps the goals it had, for its summary email
+alter table public.cycle_history add column if not exists goals text not null default '';
+
 -- The in-app inbox. Always on, silent, and free.
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(),
@@ -1620,15 +1623,16 @@ begin
 
   select count(*) into n_done from public.cards where status = 'done' and archived_at is null;
   select count(*) into n_open from public.cards where status in ('todo', 'doing', 'review', 'security') and archived_at is null;
-  insert into public.cycle_history (n, start_date, end_date, done, total)
-  values (b.cycle_n, b.cycle_start, least(b.cycle_start + b.cycle_days - 1, newstart - 1), n_done, n_done + n_open)
+  insert into public.cycle_history (n, start_date, end_date, done, total, goals)
+  values (b.cycle_n, b.cycle_start, least(b.cycle_start + b.cycle_days - 1, newstart - 1), n_done, n_done + n_open, b.cycle_goals)
   on conflict (n) do nothing;
   delete from public.cycle_history where n <= b.cycle_n - 12;
 
   perform set_config('nb.system', '1', true);
   update public.cards set archived_at = now() where status = 'done' and archived_at is null;
   update public.cards set rolled = rolled + 1, unplanned = false where status in ('todo', 'doing', 'review', 'security') and archived_at is null;
-  update public.board set cycle_n = b.cycle_n + k, cycle_start = newstart, updated_at = now() where id = 1;
+  -- A new cycle starts with its own goals: the old ones are kept with the cycle they belonged to
+  update public.board set cycle_n = b.cycle_n + k, cycle_start = newstart, cycle_goals = '', updated_at = now() where id = 1;
   perform set_config('nb.system', prev_sys, true);
   return true;
 end $$;
@@ -1955,6 +1959,142 @@ begin
   return jsonb_build_object('moved', moved);
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Cycle summary email: a PM sends a cycle's summary to anyone (a founder, investors, the team)
+-- from their own Gmail. Built here from the board's own data; the app pastes it into Gmail.
+-- ---------------------------------------------------------------------
+
+-- The summary of cycle p_n (null = the current one): {subject, html, text, n}. p_note goes at the top.
+create or replace function private.cycle_report(p_n int, p_note text, p_from text) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare
+  b public.board;
+  h public.cycle_history;
+  s public.notify_settings;
+  cur boolean;
+  d_from date; d_to date;
+  goals text[];
+  shipped jsonb; going jsonb;
+  n_open int := 0; n_unplanned int; n_carried int := 0;
+  base text;
+  head text; body text := ''; txt text := '';
+  it jsonb;
+  green constant text := '#0f766e';
+  grey constant text := '#6b7280';
+begin
+  select * into b from public.board where id = 1;
+  select * into s from public.notify_settings where id = 1;
+  base := regexp_replace(coalesce(s.app_url, ''), '#.*$', '');
+  cur := p_n is null or p_n = b.cycle_n;
+  if cur then
+    d_from := b.cycle_start; d_to := b.cycle_start + b.cycle_days - 1;
+    goals := array(select trim(g) from unnest(string_to_array(b.cycle_goals, E'\n')) g where trim(g) <> '');
+  else
+    select * into h from public.cycle_history where n = p_n;
+    if not found then raise exception 'Cycle % is no longer kept (the board keeps the last 12)', p_n using errcode = '22023'; end if;
+    d_from := h.start_date; d_to := h.end_date;
+    goals := array(select trim(g) from unnest(string_to_array(h.goals, E'\n')) g where trim(g) <> '');
+  end if;
+
+  -- What shipped: done this cycle (the current one), or finished between its dates (a past one)
+  select coalesce(jsonb_agg(jsonb_build_object('key', b.card_prefix || '-' || c.num, 'title', c.title, 'tags', c.tags,
+           'owner', (select name from public.people where id = c.assignee_id), 'unplanned', c.unplanned) order by c.done_at), '[]')
+    into shipped
+    from public.cards c
+   where c.status = 'done'
+     and (case when cur then c.archived_at is null
+               else c.done_at >= (d_from::timestamp at time zone b.timezone) and c.done_at < ((d_to + 1)::timestamp at time zone b.timezone) end);
+  n_unplanned := (select count(*) from jsonb_array_elements(shipped) e where (e ->> 'unplanned')::boolean);
+  if cur then
+    select coalesce(jsonb_agg(jsonb_build_object('key', b.card_prefix || '-' || c.num, 'title', c.title, 'status', private.status_name(c.status),
+             'owner', (select name from public.people where id = c.assignee_id)) order by c.status desc, c.num), '[]')
+      into going
+      from public.cards c where c.status in ('doing', 'review', 'security') and c.archived_at is null;
+    select count(*) into n_open from public.cards where status in ('todo', 'doing', 'review', 'security') and archived_at is null;
+    select count(*) into n_carried from public.cards where status in ('todo', 'doing', 'review', 'security') and archived_at is null and rolled > 0;
+    n_unplanned := n_unplanned + (select count(*) from public.cards where status in ('todo', 'doing', 'review', 'security') and archived_at is null and unplanned);
+  else
+    going := '[]';
+    n_open := greatest(h.total - h.done, 0);
+  end if;
+
+  head := b.name || ' · Cycle ' || coalesce(p_n, b.cycle_n) || ' summary: ' || jsonb_array_length(shipped) || ' shipped';
+
+  -- the email
+  if coalesce(trim(p_note), '') <> '' then
+    body := body || '<p style="margin:0 0 20px;padding:12px 14px;background:#f3f4f6;border-radius:8px;white-space:pre-line">' || private.h(trim(p_note)) || '</p>';
+    txt := txt || trim(p_note) || E'\n\n';
+  end if;
+  body := body
+    || '<p style="margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:' || grey || '">' || private.h(b.name) || '</p>'
+    || '<h1 style="margin:4px 0 2px;font-size:22px;line-height:1.3">Cycle ' || coalesce(p_n, b.cycle_n) || ' summary</h1>'
+    || '<p style="margin:0 0 18px;color:' || grey || '">' || to_char(d_from, 'Mon FMDD') || ' to ' || to_char(d_to, 'Mon FMDD') || case when cur then ', so far' else '' end || '</p>'
+    || '<table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 0 20px"><tr>'
+    || format('<td style="padding:12px;background:#ecfdf5;border-radius:10px;text-align:center"><div style="font-size:24px;font-weight:700;color:%s">%s</div><div style="font-size:12px;color:%s">shipped</div></td>', green, jsonb_array_length(shipped), grey)
+    || format('<td style="padding:12px;background:#fef3c7;border-radius:10px;text-align:center"><div style="font-size:24px;font-weight:700;color:#b45309">%s</div><div style="font-size:12px;color:%s">unplanned</div></td>', n_unplanned, grey)
+    || format('<td style="padding:12px;background:#f3f4f6;border-radius:10px;text-align:center"><div style="font-size:24px;font-weight:700">%s</div><div style="font-size:12px;color:%s">%s</div></td>', n_open, grey, case when cur then 'still open' else 'carried over' end)
+    || '</tr></table>';
+  txt := txt || 'Cycle ' || coalesce(p_n, b.cycle_n) || ' summary, ' || b.name || E'\n'
+    || to_char(d_from, 'Mon FMDD') || ' to ' || to_char(d_to, 'Mon FMDD') || case when cur then ', so far' else '' end || E'\n\n'
+    || jsonb_array_length(shipped) || ' shipped, ' || n_unplanned || ' unplanned, ' || n_open || case when cur then ' still open' else ' carried over' end || E'\n';
+
+  if cardinality(goals) > 0 then
+    body := body || '<h2 style="margin:0 0 6px;font-size:15px">Goals</h2><ul style="margin:0 0 18px;padding-left:20px">'
+      || (select string_agg('<li>' || private.h(g) || '</li>', '') from unnest(goals) g) || '</ul>';
+    txt := txt || E'\nGoals\n' || (select string_agg('- ' || g, E'\n') from unnest(goals) g) || E'\n';
+  end if;
+
+  body := body || '<h2 style="margin:0 0 6px;font-size:15px">What shipped</h2>';
+  txt := txt || E'\nWhat shipped\n';
+  if jsonb_array_length(shipped) = 0 then
+    body := body || '<p style="margin:0 0 18px;color:' || grey || '">Nothing finished ' || case when cur then 'yet.' else 'in this cycle.' end || '</p>';
+    txt := txt || 'Nothing finished ' || case when cur then 'yet.' else 'in this cycle.' end || E'\n';
+  else
+    body := body || '<ul style="margin:0 0 18px;padding-left:20px">';
+    for it in select * from jsonb_array_elements(shipped) loop
+      body := body || '<li style="margin:0 0 4px"><b>' || private.h(it ->> 'key') || '</b> ' || private.h(it ->> 'title')
+        || '<span style="color:' || grey || '">'
+        || coalesce(' · ' || private.h(it ->> 'owner'), '')
+        || coalesce(' · ' || (select string_agg('#' || private.h(t), ' ') from jsonb_array_elements_text(it -> 'tags') t), '')
+        || '</span>' || case when (it ->> 'unplanned')::boolean then ' <span style="color:#b45309">(unplanned)</span>' else '' end || '</li>';
+      txt := txt || '- ' || (it ->> 'key') || ' ' || (it ->> 'title') || coalesce(' (' || (it ->> 'owner') || ')', '')
+        || case when (it ->> 'unplanned')::boolean then ' [unplanned]' else '' end || E'\n';
+    end loop;
+    body := body || '</ul>';
+  end if;
+
+  if jsonb_array_length(going) > 0 then
+    body := body || '<h2 style="margin:0 0 6px;font-size:15px">In progress</h2><ul style="margin:0 0 18px;padding-left:20px">';
+    txt := txt || E'\nIn progress\n';
+    for it in select * from jsonb_array_elements(going) loop
+      body := body || '<li style="margin:0 0 4px"><b>' || private.h(it ->> 'key') || '</b> ' || private.h(it ->> 'title')
+        || '<span style="color:' || grey || '"> · ' || private.h(it ->> 'status') || coalesce(' · ' || private.h(it ->> 'owner'), '') || '</span></li>';
+      txt := txt || '- ' || (it ->> 'key') || ' ' || (it ->> 'title') || ' (' || (it ->> 'status') || coalesce(', ' || (it ->> 'owner'), '') || E')\n';
+    end loop;
+    body := body || '</ul>';
+  end if;
+
+  if base <> '' then
+    body := body || format('<p style="margin:20px 0 4px"><a href="%s" style="background:%s;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;display:inline-block">Open the board</a></p>', private.h(base), green);
+    txt := txt || E'\nOpen the board: ' || base || E'\n';
+  end if;
+  body := '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#111827;max-width:600px;margin:0 auto;padding:16px">'
+    || body || '<p style="margin:24px 0 0;font-size:12px;color:' || grey || '">Sent by ' || private.h(coalesce(p_from, 'the project manager')) || ' from Nudge Board.</p></div>';
+  txt := txt || E'\nSent by ' || coalesce(p_from, 'the project manager') || ' from Nudge Board.';
+  return jsonb_build_object('subject', head, 'html', body, 'text', txt, 'n', coalesce(p_n, b.cycle_n));
+end $$;
+
+-- PM: what the summary of a cycle looks like before sending it
+create or replace function public.cycle_report_preview(p_n int default null, p_note text default null) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not private.is_pm() then raise exception 'Only the project manager can do this' using errcode = '42501'; end if;
+  return private.cycle_report(p_n, left(p_note, 1000), (select name from public.people where id = private.me()));
+end $$;
+
+-- An earlier draft sent the summary from the database; it now goes from the PM's own Gmail
+drop function if exists public.send_cycle_report(int, text[], text);
+
 -- PM: the GitHub key and when GitHub last reported in
 create or replace function public.github_status() returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -2134,6 +2274,7 @@ grant execute on function public.reset_join_code(uuid) to authenticated;
 grant execute on function public.claude_outbox_take(text, int) to anon;
 grant execute on function public.set_my_away(date) to authenticated;
 grant execute on function public.github_status() to authenticated;
+grant execute on function public.cycle_report_preview(int, text) to authenticated;
 grant execute on function public.github_sync(text, jsonb) to anon;
 grant execute on function public.claude_outbox_done(text, uuid, boolean, text) to anon;
 

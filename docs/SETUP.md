@@ -128,6 +128,8 @@ To give someone a task, open a card and choose the **Owner**, or type `@sam` whe
 
 To change a PM's email, first make them a member, change the email, then make them a PM again.
 
+**Sending a cycle summary to your founder or investors.** Click the cycle bar at the top of the board, then under **What shipped** press **Email this summary** (project managers only). Type the addresses (anyone, on the team or not), add a note if you like, and press **Preview** to see the email. **Send from my Gmail** opens Gmail with the addresses and subject filled in and copies the formatted summary: click in the message, press Cmd+V (Ctrl+V on Windows), and send. It goes out straight away from your own address, not through the Claude task. Pick an earlier cycle in the list to send that one instead.
+
 **Bringing your existing work over.** In **Team › Moving in › Bring in cards**, choose an export from Trello (JSON), Notion (CSV), GitHub Issues (JSON from `gh issue list --limit 500 --json number,title,body,labels,assignees,state,url`) or any CSV with a title column. You see a preview first. Finished cards stay behind unless you tick the box, and people who are not on the team are left unassigned. Tip: bring only what is still open, and archive the old tool.
 
 ## Step 10. Notifications
@@ -147,13 +149,14 @@ The board decides who gets what and when (the calm rules in `docs/NOTIFICATIONS.
 1. **Connect your mailbox to Claude.** In the Claude app open **Settings > Connectors** and connect **Gmail** (or another email connector that can send).
 2. **Give the board's Claude key to this folder.** On the board open **Team > Email**, press **Copy key**, and paste it into a new file `mailer/claude-key.txt` in this folder. (The file is never committed. The key only lets someone read and tick off the outbox.)
 3. Check it: in a terminal in this folder run `node mailer/outbox.mjs take`. It prints `[]` when nothing is waiting.
-4. **The scheduled task.** In the Claude app, **Scheduled** in the sidebar lists **Nudge Board: send waiting emails** (task id `nudge-board-email`). It runs every 30 minutes on weekdays from 08:00 to 18:30, runs `node mailer/outbox.mjs take`, sends each email with Gmail's send tool exactly as written, and reports each one back with `done` or `fail`. Until the key file from item 2 exists, each run just stops and says so. If the task is missing on a new computer, ask Claude in this folder to "create the Nudge Board email task" with those steps.
+4. **The scheduled task.** In the Claude app, **Scheduled** in the sidebar lists **Nudge Board: send waiting emails** (task id `nudge-board-email`). It runs every 2 hours, Monday to Saturday, runs `node mailer/outbox.mjs take`, sends each email with Gmail's send tool exactly as written, and reports each one back with `done` or `fail`. Until the key file from item 2 exists, each run just stops and says so. If the task is missing on a new computer, ask Claude in this folder to "create the Nudge Board email task" with those steps.
 5. On the board, in **Team > Email**, check that **Email service** says **Claude**, the **Board web address** is right, and press **Save email settings**. Press **Send me a test email**. It goes out on the task's next run. When it arrives, tick **Send emails**.
 
 Things to know:
 
+* Emails go out on the task's next run, so they can take up to 2 hours to arrive (longer over a Sunday, when the task does not run).
 * Scheduled tasks run while the Claude app is open on your computer. If it is closed, emails wait, and a task that was due runs when the app next opens. Emails nobody picked up within a day are dropped (late news is noise); the bell still has them.
-* Each run uses some of your Claude usage, even when there is nothing to send. Change the schedule in the Claude app's scheduled tasks if you want fewer runs.
+* Each run uses some of your Claude usage, even when there is nothing to send. Change the schedule in the Claude app's scheduled tasks if you want more or fewer runs.
 * **Team > Email** shows when Claude last checked the outbox and how many emails are waiting.
 
 ## Step 11. Connect GitHub (optional, recommended)

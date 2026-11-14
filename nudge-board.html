@@ -370,6 +370,9 @@ button.pill{border:1px dashed var(--warn);cursor:pointer;font:inherit;font-weigh
 .goal-list{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
 .shipped{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .shipped li{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
+.report{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--line2);border-radius:12px;background:var(--col)}
+.report-frame{width:100%;height:420px;border:1px solid var(--line2);border-radius:10px;background:#fff}
+.report-text{margin:0;padding:12px;max-height:320px;overflow:auto;white-space:pre-wrap;border:1px solid var(--line2);border-radius:10px;font:13px/1.5 var(--f-mono)}
 .steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:14px}
 .steps code,.hint code{font:12.5px/1.4 var(--f-mono);background:var(--chip);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
 .secret{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px}
@@ -592,6 +595,7 @@ const ICONS={
   help:'<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1.1 1-1.1 1.8M12 17h.01"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
   x:'<path d="M6 6l12 12M18 6L6 18"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6.5 8.5-6.5"/>',
   copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
   cal:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   search:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
@@ -959,9 +963,11 @@ function cycleHTML(){
       '<div class="sec"><h3>What shipped</h3>'+
         '<div class="row"><select id="c-which" aria-label="Which cycle"><option value="cur">This cycle (so far)</option>'+
           past.map(h=>'<option value="'+h.n+'">Cycle '+h.n+' ('+esc(cycleRange(h))+')</option>').join('')+'</select>'+
-          '<button class="btn small" data-act="copy-shipped">'+ic('copy')+'Copy as text</button></div>'+
+          '<button class="btn small" data-act="copy-shipped">'+ic('copy')+'Copy as text</button>'+
+          (canPlan()?'<button class="btn small" data-act="report-open" aria-expanded="false" aria-controls="report-slot">'+ic('mail')+'Email this summary</button>':'')+'</div>'+
+        '<div id="report-slot"></div>'+
         '<div id="shipped">'+skLines(3,'Loading what shipped')+'</div>'+
-        '<span class="hint">Paste it into a team update, a changelog or an investor update.</span></div>'+
+        '<span class="hint">Paste it into a team update, a changelog or an investor update, or email it from your Gmail.</span></div>'+
     '</div>'+
     '<div class="df"><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
 }
@@ -978,6 +984,108 @@ async function showShipped(){
     :'<p class="muted" style="margin:0">Nothing finished '+(cy.current?'yet this cycle.':'in that cycle.')+'</p>';
 }
 function openCycle(){openDialog('cycle',cycleHTML());showShipped();}
+
+/* ---------- emailing a cycle summary (project managers) ---------- */
+// Sent from the PM's own Gmail, straight away: Gmail opens with the addresses and subject filled in,
+// and the formatted email (built by the server) is on the clipboard to paste.
+// A single-browser board has no server: Gmail opens with the summary as plain text.
+const REPORT_TO_PREF='nudge.reportTo';   // the addresses used last time
+const EMAIL_RE=/^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// Addresses typed into "Send to", split on commas, semicolons or spaces, each once
+const splitEmails=s=>[...new Set(String(s||'').split(/[\s,;]+/).map(x=>x.trim()).filter(Boolean))];
+// The cycle picked under "What shipped": null means the current one
+function chosenCycleN(){const v=$('#c-which')?$('#c-which').value:'cur';return v==='cur'?null:Number(v);}
+function reportFormHTML(){
+  return '<div class="report">'+
+    '<div class="field"><label for="r-to">Send to</label>'+
+      '<input id="r-to" type="email" multiple autocomplete="email" inputmode="email" placeholder="founder@yourstartup.com, investor@fund.com" value="'+esc(readPref(REPORT_TO_PREF)||'')+'">'+
+      '<span class="hint">Anyone, on the team or not. Separate addresses with commas.</span></div>'+
+    '<div class="field"><label for="r-note">Note <span class="muted">(optional)</span></label>'+
+      '<textarea id="r-note" rows="2" maxlength="1000" placeholder="A line of context, shown above the summary"></textarea></div>'+
+    '<div class="row">'+
+      '<button class="btn small" data-act="report-preview">Preview</button>'+
+      '<button class="btn small primary" data-act="report-send" data-tip="Opens Gmail with everything ready. You press Send.">'+ic('mail')+'Send from my Gmail</button>'+
+      '<span id="r-msg" class="hint" role="status"></span></div>'+
+    '<div id="r-preview"></div></div>';
+}
+function toggleReport(btn){
+  const slot=$('#report-slot');if(!slot)return;
+  const open=!slot.innerHTML;
+  slot.innerHTML=open?reportFormHTML():'';
+  btn.setAttribute('aria-expanded',String(open));
+  if(open)$('#r-to').focus();
+}
+function reportSay(text,state,link){
+  const m=$('#r-msg');if(!m)return;
+  m.textContent=text;m.className='hint'+(state?' '+state:'');
+  if(link){const a=document.createElement('a');a.href=link;a.target='_blank';a.rel='noopener';a.textContent='Open Gmail';m.append(' ',a);}
+}
+// Gmail's compose window, filled in. Its link only carries plain text, so the formatted email is pasted.
+const gmailComposeUrl=(to,subject,body)=>'https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.join(','))+
+  '&su='+encodeURIComponent(subject)+(body?'&body='+encodeURIComponent(body):'');
+const PASTE_KEY=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent)?'Cmd+V':'Ctrl+V';
+// Copies formatted text (with plain text for apps that cannot take it). Both may be promises: the copy has to
+// start during the click, before anything is awaited, or the browser refuses it. Resolves true when copied.
+function copyRich(html,text){
+  if(!navigator.clipboard||!navigator.clipboard.write||typeof ClipboardItem==='undefined')return Promise.resolve(false);
+  const blob=(v,type)=>Promise.resolve(v).then(x=>new Blob([x],{type}));
+  try{return navigator.clipboard.write([new ClipboardItem({'text/html':blob(html,'text/html'),'text/plain':blob(text,'text/plain')})]).then(()=>true,()=>false);}
+  catch(e){return Promise.resolve(false);}
+}
+// The plain-text summary for a single-browser board, with the note on top
+function reportPlainText(){
+  const note=$('#r-note')?$('#r-note').value.trim():'';
+  return (note?note+'\n\n':'')+shippedText(T.shipped.cy,T.shipped.list);
+}
+// The email's "Open the board" button uses the saved board address: make sure it is the public one
+async function checkReportUrl(){
+  if(!T.settings)T.settings=await B.getSettings();
+  await ensureBoardUrl(T.settings);
+}
+async function previewReport(){
+  const box=$('#r-preview');if(!box)return;
+  if(!T.on){
+    if(!T.shipped){reportSay('Wait a moment for the list to load.','badline');return;}
+    box.innerHTML='<pre class="report-text">'+esc(reportPlainText())+'</pre>';return;
+  }
+  box.innerHTML=skLines(4,'Loading the preview');
+  try{
+    await checkReportUrl();
+    const r=await B.cycleReportPreview(chosenCycleN(),$('#r-note').value.trim());
+    if(!$('#r-preview'))return;   // the dialog closed while loading
+    box.innerHTML='<p class="hint" style="margin:0 0 8px">Subject: '+esc(r.subject)+'</p><iframe class="report-frame" sandbox title="Preview of the email"></iframe>';
+    $('.report-frame',box).srcdoc=r.html;   // sandboxed: no scripts, no access to this page
+  }catch(e){box.innerHTML=loadErrorHTML(e.message||'Could not load the preview.','report-preview');}
+}
+async function sendReport(){
+  const to=splitEmails($('#r-to').value);
+  if(!to.length){reportSay('Add at least one email address.','badline');$('#r-to').focus();return;}
+  const bad=to.find(x=>!EMAIL_RE.test(x));
+  if(bad){reportSay('"'+bad+'" is not an email address.','badline');$('#r-to').focus();return;}
+  if(to.length>20){reportSay('Send to at most 20 people at a time.','badline');return;}
+  if(!T.on&&!T.shipped){reportSay('Wait a moment for the list to load.','badline');return;}
+  writePref(REPORT_TO_PREF,to.join(', '));
+  // Open the window now, during the click: browsers block windows opened after a wait
+  const win=window.open('about:blank','_blank');
+  if(win)win.opener=null;
+  const go=url=>{if(win&&!win.closed)win.location.href=url;else reportSay('Your browser blocked the new window.','badline',url);return !!win&&!win.closed;};
+  if(!T.on){
+    const subject=S.name+' · Cycle '+T.shipped.cy.n+' summary: '+T.shipped.list.length+' shipped';
+    if(go(gmailComposeUrl(to,subject,reportPlainText())))reportSay('Gmail is open with the summary. Press Send there.','okline');
+    return;
+  }
+  const report=checkReportUrl().then(()=>B.cycleReportPreview(chosenCycleN(),$('#r-note').value.trim()));
+  const copied=copyRich(report.then(r=>r.html),report.then(r=>r.text));
+  reportSay('Getting the email ready…');
+  let r;
+  try{r=await report;}
+  catch(e){if(win)win.close();reportSay(e.message||'Could not build the email. Try again.','badline');return;}
+  const pasted=await copied;
+  // Copied: Gmail opens with an empty message to paste into. Not copied: the summary goes in as plain text.
+  if(go(gmailComposeUrl(to,r.subject,pasted?'':r.text)))
+    reportSay(pasted?'Gmail is open with the addresses and subject. Click in the message, press '+PASTE_KEY+' to paste the summary, then Send.'
+                    :'Gmail is open with the summary. Press Send there.','okline');
+}
 
 /* ---------- team load: what each person has open (PM only, never a ranking) ---------- */
 function teamLoadHTML(){
@@ -2185,6 +2293,9 @@ function dialogClick(a,act,e){
   if(a==='email-retry'){openTeam();return;}
   if(a==='shipped-retry'){showShipped();return;}
   if(a==='cmt-retry'){const id=dlg.dataset.id;T.comments=null;refreshComments(id);loadComments(id);return;}
+  if(kind==='cycle'&&a==='report-open'){toggleReport(act);return;}
+  if(kind==='cycle'&&a==='report-preview'){withBusy(act,previewReport);return;}
+  if(kind==='cycle'&&a==='report-send'){withBusy(act,sendReport);return;}
   if(kind==='cycle'&&a==='copy-shipped'){
     if(T.shipped)copyText(shippedText(T.shipped.cy,T.shipped.list)).then(ok=>toast(ok?'Copied. Paste it into your update.':'Could not copy. Select the list and copy it.'));
     return;
@@ -2318,7 +2429,7 @@ dlg.addEventListener('input',e=>{
 dlg.addEventListener('change',e=>{
   const kind=dlg.dataset.kind,id=e.target.id,el=e.target;
   if(T.on&&teamDialogChange(e))return;
-  if(kind==='cycle'&&id==='c-which'){showShipped();return;}
+  if(kind==='cycle'&&id==='c-which'){showShipped();const p=$('#r-preview');if(p)p.innerHTML='';return;}
   if(kind==='import'&&id==='imp-done'){$('#imp-out').innerHTML=importPreviewHTML(T.importParsed);return;}
   if(kind==='import'&&id==='imp-file'&&el.files&&el.files[0]){
     el.files[0].text().then(t=>{$('#imp-text').value=t;$('[data-act="imp-read"]').click();});
@@ -2548,6 +2659,8 @@ function makeSupabaseBackend(cfg){
     async updateSettings(patch){ok(await sb.from('notify_settings').update(patch).eq('id',1));},
     async emailStatus(){return ok(await sb.rpc('email_status'));},
     async sendTestEmail(){return ok(await sb.rpc('send_test_email'));},
+    // n: the cycle number, or null for the current one
+    async cycleReportPreview(n,note){return ok(await sb.rpc('cycle_report_preview',{p_n:n,p_note:note||null}));},
     async updateMyPrefs(mode,tz,pause){return ok(await sb.rpc('update_my_prefs',{p_notify_mode:mode,p_timezone:tz,p_pause:pause}));},
     async setMyAway(until){return ok(await sb.rpc('set_my_away',{p_until:until||null}));},
     async githubStatus(){return ok(await sb.rpc('github_status'));},
@@ -3140,8 +3253,27 @@ function personRow(p){
     '</div></div>';
 }
 const fmtCode=c=>{c=String(c||'').replace(/[^a-z0-9]/gi,'').toUpperCase();return c.length===8?c.slice(0,4)+'-'+c.slice(4):c;};
+// An address that only opens on one computer (a file, localhost): useless in an email to anyone else
+const isLocalUrl=u=>/^(file:|https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])|https?:\/\/[^\/]*\.local\b)/i.test(String(u||'').trim());
 // The board's public address: what was saved, else config.js, else wherever this page is.
-const boardUrl=s=>(s&&s.app_url)||CFG.appUrl||(location.origin+location.pathname);
+// A local address saved by an earlier version (opened from this computer) gives way to config.js.
+const boardUrl=s=>{
+  const saved=s&&s.app_url;
+  if(saved&&!(isLocalUrl(saved)&&CFG.appUrl))return saved;
+  return CFG.appUrl||(location.origin+location.pathname);
+};
+// PM: make sure the address saved for emails is the public one. Fixes a missing or local address
+// with the one in config.js, so "Open the board" in emails goes to the hosted board.
+async function ensureBoardUrl(s){
+  if(!s||!CFG.appUrl||isLocalUrl(CFG.appUrl))return;
+  if(s.app_url&&!isLocalUrl(s.app_url))return;
+  try{await B.updateSettings({app_url:CFG.appUrl,updated_at:new Date().toISOString()});s.app_url=CFG.appUrl;}catch(e){}
+}
+// Before saving: refuse an address only this computer can open
+function badBoardUrl(u){
+  if(isLocalUrl(u))return 'That address only works on this computer, so links in emails would not open for anyone else. Use the address where the board is hosted'+(CFG.appUrl&&!isLocalUrl(CFG.appUrl)?', like '+CFG.appUrl:'')+'.';
+  return '';
+}
 function emailPanelHTML(){
   const s=T.settings;
   if(!s)return skLines(4,'Loading email settings');
@@ -3198,7 +3330,7 @@ function teamHTML(){
     '<div class="sec"><h3>Who reviews by default</h3><div class="field"><label for="t-rev">When a card reaches Review and has no reviewer</label><select id="t-rev"><option value="">The first project manager</option>'+
       act.map(p=>opt(p.id,S.reviewerId||'',esc(p.name))).join('')+'</select></div></div>'+
     '<div class="sec"><h3>Email</h3><div id="emailpanel">'+emailPanelHTML()+'</div></div>'+
-  '</div><div class="df"><span class="hint">Emails wait 3 minutes, skip nights and weekends, and go out on Claude\'s next run.</span><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
+  '</div><div class="df"><span class="hint">Emails wait 3 minutes, skip nights and weekends, and go out on Claude\'s next run (every 2 hours, Monday to Saturday).</span><span class="grow"></span><button class="btn primary" data-act="close">Close</button></div>';
 }
 function loadGithub(){
   T.github=null;
@@ -3212,8 +3344,8 @@ async function openTeam(){
   try{
     const [s,st]=await Promise.all([B.getSettings(),B.emailStatus()]);
     T.settings=s;T.status=st;
-    // No address saved yet: save the board's address so email buttons and pause links work
-    if(!s.app_url&&CFG.appUrl){try{await B.updateSettings({app_url:CFG.appUrl});s.app_url=CFG.appUrl;}catch(e){}}
+    // No address saved yet, or a local one: save the board's public address so email buttons and pause links work
+    await ensureBoardUrl(s);
     if(dlg.dataset.kind==='team'){const ep=$('#emailpanel');if(ep)ep.innerHTML=emailPanelHTML();}
   }catch(e){const ep=$('#emailpanel');if(ep)ep.innerHTML=loadErrorHTML(e.message||'Could not load the email settings.','email-retry');}
 }
@@ -3254,7 +3386,9 @@ function teamDialogChange(e){
       (async()=>{
         const m=$('#e-msg'),patch=Object.assign(emailPatch(),{emails_enabled:el.checked});
         el.disabled=true;if(m){m.textContent='Saving…';m.className='hint';}
-        if(el.checked&&patch.provider!=='log'&&!patch.app_url){el.checked=false;if(m){m.textContent='Enter the board web address first.';m.className='hint badline';}return;}
+        if(el.checked&&patch.provider!=='log'&&!patch.app_url){el.checked=false;el.disabled=false;if(m){m.textContent='Enter the board web address first.';m.className='hint badline';}return;}
+        const urlErr=badBoardUrl(patch.app_url);
+        if(urlErr){el.checked=!el.checked;el.disabled=false;if(m){m.textContent=urlErr;m.className='hint badline';}return;}
         try{await B.updateSettings(patch);Object.assign(T.settings,patch);if(m){m.textContent=el.checked?'Emails are on. Settings saved.':'Emails are off. Settings saved.';m.className='hint okline';}}
         catch(err){el.checked=!el.checked;if(m){m.textContent=err.message||'Could not change that.';m.className='hint badline';}}
         finally{el.disabled=false;}
@@ -3346,6 +3480,8 @@ function teamDialogClick(kind,a,act,e){
     if(a==='team-save'){
       const m=$('#e-msg');
       const patch=emailPatch();
+      const urlErr=badBoardUrl(patch.app_url);
+      if(urlErr){m.textContent=urlErr;m.className='hint badline';$('#e-appurl').focus();return true;}
       withBusy(act,async()=>{
         try{await B.updateSettings(patch);Object.assign(T.settings,patch);m.textContent='Saved.';m.className='hint okline';}
         catch(err){m.textContent=err.message||'Could not save.';m.className='hint badline';}
